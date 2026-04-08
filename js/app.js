@@ -66,18 +66,26 @@ window.GC = window.GC || {};
         await bootApp();
       } else if (event === 'SIGNED_OUT') {
         GC._currentView = null;
-        // Remove logout button so it's re-created on next login
         const logoutBtn = document.getElementById('logout-btn');
         if (logoutBtn) logoutBtn.remove();
         GC.Auth.renderLogin();
       }
     });
 
-    // Check existing session
-    const { data: { session } } = await GC.supabase.auth.getSession();
-    if (session) {
-      await bootApp();
-    } else {
+    // Check existing session with timeout
+    try {
+      const sessionPromise = GC.supabase.auth.getSession();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 8000)
+      );
+      const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+      if (session) {
+        await bootApp();
+      } else {
+        GC.Auth.renderLogin();
+      }
+    } catch (e) {
+      console.error('Auth check failed:', e);
       GC.Auth.renderLogin();
     }
   }

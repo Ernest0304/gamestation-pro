@@ -519,3 +519,40 @@ select.form-input { appearance: none; cursor: pointer;
   color: var(--red); border-color: rgba(239, 68, 68, 0.3);
   background: rgba(239, 68, 68, 0.08);
 }
+
+/* ===== History tabs & chart ===== */
+.history-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+}
+.history-tab {
+  padding: 8px 20px; border-radius: var(--radius-sm);
+  font-size: 0.85rem; font-weight: 500;
+  color: var(--text-secondary); background: var(--bg-input);
+  border: 1px solid var(--border); transition: all 0.2s;
+}
+.history-tab:hover { color: var(--text-primary); border-color: var(--border-light); }
+.history-tab.active {
+  color: var(--cyan); background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
+}
+.date-selector { margin-bottom: 20px; }
+.date-selector .form-input { width: auto; display: inline-block; }
+.range-inputs {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.range-inputs .form-input { width: 160px; }
+.chart-container {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px;
+  height: 280px; position: relative;
+}
+.report-buttons { display: flex; gap: 8px; }
+
+@media (max-width: 640px) {
+  .history-tabs { gap: 2px; }
+  .history-tab { padding: 6px 12px; font-size: 0.78rem; flex: 1; text-align: center; }
+  .range-inputs .form-input { width: 120px; }
+  .chart-container { height: 220px; padding: 14px; }
+  .report-buttons { gap: 6px; }
+  .report-buttons .btn { font-size: 0.72rem; padding: 6px 10px; }
+}

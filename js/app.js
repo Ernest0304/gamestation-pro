@@ -51,42 +51,55 @@ window.GC = window.GC || {};
   }
 
   /* ---- App boot ---- */
+  let booted = false;
+
   async function bootApp() {
-    await GC.Store.init();
-    GC.Auth.showNavbar();
-    bindNav();
-    navigate('dashboard');
+    if (booted) return;
+    booted = true;
+    try {
+      await GC.Store.init();
+      GC.Auth.showNavbar();
+      bindNav();
+      navigate('dashboard');
+    } catch (e) {
+      console.error('Boot failed:', e);
+      booted = false;
+      GC.Auth.renderLogin();
+    }
+  }
+
+  function showLogin() {
+    booted = false;
+    GC._currentView = null;
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.remove();
+    GC.Auth.renderLogin();
   }
 
   /* ---- Init ---- */
   async function init() {
-    // Listen for auth changes
+    // Listen for auth changes (handles login/logout after initial load)
     GC.supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
         await bootApp();
       } else if (event === 'SIGNED_OUT') {
-        GC._currentView = null;
-        const logoutBtn = document.getElementById('logout-btn');
-        if (logoutBtn) logoutBtn.remove();
-        GC.Auth.renderLogin();
+        showLogin();
+      } else if (event === 'INITIAL_SESSION') {
+        // Handled below by getSession — ignore here to avoid double-boot
       }
     });
 
-    // Check existing session with timeout
+    // Check existing session
     try {
-      const sessionPromise = GC.supabase.auth.getSession();
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 8000)
-      );
-      const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+      const { data: { session } } = await GC.supabase.auth.getSession();
       if (session) {
         await bootApp();
       } else {
-        GC.Auth.renderLogin();
+        showLogin();
       }
     } catch (e) {
       console.error('Auth check failed:', e);
-      GC.Auth.renderLogin();
+      showLogin();
     }
   }
 

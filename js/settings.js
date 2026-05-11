@@ -123,8 +123,19 @@ GC.Settings = (function () {
       <div class="settings-section">
         <div class="settings-title">通用 / General</div>
         <div class="settings-row">
-          <div class="settings-label">最低计费时长<small>Minimum billable minutes (0 = none)</small></div>
-          <input type="number" id="min-billing" class="form-input settings-input" value="${s.minBillingMinutes || 0}" min="0" step="5">
+          <div class="settings-label">Platinum 充值福利金<small>$X bonus per Platinum top-up (≥ ${sym}${s.memberFees.platinum})</small></div>
+          <div class="rate-input-group">
+            <span class="rate-prefix">${sym}</span>
+            <input type="number" id="platinum-bonus" class="form-input settings-input" value="${s.platinumTopupBonus}" min="0" step="5">
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">提醒分钟数<small>Warn N minutes before walk-in time up / member balance runs out</small></div>
+          <input type="number" id="warn-minutes" class="form-input settings-input" value="${s.warnMinutes}" min="1" max="60" step="1">
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">每台最多人数<small>Max players per station (1-6)</small></div>
+          <input type="number" id="max-players" class="form-input settings-input" value="${s.maxPlayersPerStation}" min="1" max="6" step="1">
         </div>
         <div class="settings-row">
           <div class="settings-label">货币符号<small>Currency symbol</small></div>
@@ -193,8 +204,11 @@ GC.Settings = (function () {
           platinum: parseFloat(document.getElementById('fee-platinum').value) || 0,
         },
         promoActive: document.getElementById('promo-toggle').checked,
-        minBillingMinutes: parseInt(document.getElementById('min-billing').value) || 0,
+        platinumTopupBonus: parseFloat(document.getElementById('platinum-bonus').value) || 0,
+        warnMinutes: parseInt(document.getElementById('warn-minutes').value) || 10,
+        maxPlayersPerStation: Math.max(1, Math.min(6, parseInt(document.getElementById('max-players').value) || 4)),
         currencySymbol: document.getElementById('currency-sym').value || '$',
+        minBillingMinutes: 0,
       };
       await GC.Store.saveSettings(newSettings);
       GC.toast('设置已保存 / Settings saved', 'success');

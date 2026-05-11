@@ -1,12 +1,25 @@
 /**
- * Dashboard — Main control panel with station cards and timers
+ * Dashboard — Multi-player station cards with per-player timers
+ *
+ * Each station can have up to N players (settings.maxPlayersPerStation).
+ * Each player is a separate `sessions` row with its own start_time.
+ *
+ * Walk-in: pre-paid hours, hourly block billing, no proration.
+ * Member: prorated, balance-based, no upfront payment.
+ *
+ * Warnings:
+ * - Walk-in: alert when paid_minutes - elapsed_minutes <= warnMinutes
+ * - Member: alert when estimated balance run-out is <= warnMinutes
  */
 window.GC = window.GC || {};
 
 GC.Dashboard = (function () {
   let timerInterval = null;
+  const _warned = new Set(); // session IDs we've already warned for
 
-  function fmt(ms) {
+  /* ---- Format helpers ---- */
+  function fmtClock(ms) {
+    if (ms < 0) ms = 0;
     const s = Math.floor(ms / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
@@ -14,52 +27,142 @@ GC.Dashboard = (function () {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   }
 
-  function fmtTime(ts) {
-    return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  }
+  function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); }
+  function fmtDate(ts) { return new Date(ts).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }); }
 
-  function fmtDate(ts) {
-    return new Date(ts).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+  function tierIcon(tier) {
+    return ({ platinum: '💎', silver: '🥈', regular: '👤' })[tier] || '👤';
   }
 
   function tierLabel(tier) {
-    return ({
-      platinum: '💎 Platinum',
-      silver: '🥈 Silver',
-      regular: '',
-    })[tier] || '';
+    return ({ platinum: 'Platinum', silver: 'Silver', regular: 'Regular' })[tier] || '';
   }
 
   function todayRevenue() {
     const d = new Date(); d.setHours(0, 0, 0, 0);
     return GC.Store.getSessions()
-      .filter(s => s.endTime >= d.getTime())
+      .filter(s => s.status === 'completed' && s.endTime >= d.getTime())
       .reduce((sum, s) => sum + s.total, 0)
       .toFixed(2);
   }
 
   function todaySessions() {
     const d = new Date(); d.setHours(0, 0, 0, 0);
-    return GC.Store.getSessions().filter(s => s.endTime >= d.getTime()).length;
+    return GC.Store.getSessions().filter(s => s.status === 'completed' && s.endTime >= d.getTime()).length;
   }
 
-  function runningCost(station) {
-    const mins = (Date.now() - station.startTime) / 60000;
-    const { rate } = GC.Store.getRateFor(station.type, station.memberId);
-    return ((mins / 60) * rate).toFixed(2);
+  /* ---- Sound alert ---- */
+  let _audioCtx = null;
+  function playAlertSound() {
+    try {
+      if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = _audioCtx;
+      const now = ctx.currentTime;
+      // Three quick beeps
+      [0, 0.18, 0.36].forEach(t => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, now + t);
+        gain.gain.exponentialRampToValueAtTime(0.25, now + t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.15);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(now + t);
+        osc.stop(now + t + 0.17);
+      });
+    } catch (e) {
+      console.warn('Audio alert failed:', e);
+    }
   }
 
+  function notifyWarn(title, body) {
+    // Browser notification (best effort)
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') {
+        new Notification(title, { body, icon: '/manifest.json' });
+      } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
+    playAlertSound();
+  }
+
+  /* ---- Warning logic ---- */
+  function checkWarnings() {
+    const settings = GC.Store.getSettings();
+    if (!settings) return;
+    const warnMs = settings.warnMinutes * 60000;
+    const now = Date.now();
+
+    GC.Store.getActiveSessions().forEach(s => {
+      if (_warned.has(s.id)) return;
+
+      if (s.memberId == null) {
+        // Walk-in: warn when paid time has warnMs or less remaining
+        if (!s.expectedEndTime) return;
+        const remaining = s.expectedEndTime - now;
+        if (remaining <= warnMs && remaining > 0) {
+          _warned.add(s.id);
+          const name = s.guestName || `${s.stationName} 散客`;
+          notifyWarn(
+            `⏰ 即将结束 / Time Almost Up`,
+            `${name} 还剩 ${Math.ceil(remaining / 60000)} 分钟。请询问是否加时。`
+          );
+        } else if (remaining <= 0) {
+          // Already past — show "time up" warning once
+          if (!_warned.has(s.id + '_up')) {
+            _warned.add(s.id + '_up');
+            notifyWarn(
+              `🔴 时间已到 / Time Up`,
+              `${name} 的预付时间已结束。请关桌或加时。`
+            );
+          }
+        }
+      } else {
+        // Member: warn when estimated balance covers <= warnMinutes more play
+        const m = GC.Store.getMember(s.memberId);
+        if (!m) return;
+        const { rate } = GC.Store.getRateFor(s.stationType, s.memberId);
+        if (rate <= 0) return;
+        const elapsedMin = (now - s.startTime) / 60000;
+        const elapsedCost = (elapsedMin / 60) * rate;
+        const balanceLeft = m.balance - elapsedCost;
+        const minutesLeft = (balanceLeft / rate) * 60;
+        if (minutesLeft <= settings.warnMinutes && minutesLeft > 0) {
+          _warned.add(s.id);
+          notifyWarn(
+            `💰 余额不足 / Low Balance`,
+            `${m.name} 余额仅够再玩约 ${Math.ceil(minutesLeft)} 分钟。请询问是否充值。`
+          );
+        } else if (balanceLeft <= 0 && !_warned.has(s.id + '_zero')) {
+          _warned.add(s.id + '_zero');
+          notifyWarn(
+            `🛑 余额耗尽 / Balance Depleted`,
+            `${m.name} 余额已用完。请充值或关桌。`
+          );
+        }
+      }
+    });
+
+    // Remove warned IDs for sessions that are no longer active
+    const activeIds = new Set(GC.Store.getActiveSessions().map(s => s.id));
+    for (const id of [..._warned]) {
+      const baseId = id.replace(/_(up|zero)$/, '');
+      if (!activeIds.has(baseId)) _warned.delete(id);
+    }
+  }
+
+  /* ---- Render ---- */
   function render() {
     const stations = GC.Store.getStations();
     const settings = GC.Store.getSettings();
-    const active = stations.filter(s => s.status === 'active').length;
     const sym = settings.currencySymbol;
-    const promoOn = settings.promoActive;
+    const activeCount = stations.filter(s => s.status === 'active').length;
 
     let html = '';
 
     // Promo banner
-    if (promoOn) {
+    if (settings.promoActive) {
       html += `
         <div class="promo-banner">
           <div class="promo-banner-glow"></div>
@@ -67,9 +170,9 @@ GC.Dashboard = (function () {
             <div class="promo-banner-tag">LIMITED TIME · 限时</div>
             <div class="promo-banner-title">🎮 开业促销 / Opening Promo</div>
             <div class="promo-banner-rates">
-              <span><strong>Switch 2</strong> ${sym}${settings.rates.promo['Switch 2']}<small>/小时 hr</small></span>
+              <span><strong>Switch 2</strong> ${sym}${settings.rates.promo['Switch 2']}<small>/h</small></span>
               <span class="promo-banner-divider"></span>
-              <span><strong>PS5</strong> ${sym}${settings.rates.promo['PS5']}<small>/小时 hr</small></span>
+              <span><strong>PS5</strong> ${sym}${settings.rates.promo['PS5']}<small>/h</small></span>
             </div>
           </div>
         </div>`;
@@ -77,47 +180,23 @@ GC.Dashboard = (function () {
 
     html += `
       <div class="stats-bar">
-        <div class="stat-card">
-          <span class="stat-label">使用中 / Active</span>
-          <span class="stat-value cyan">${active}</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">空闲 / Idle</span>
-          <span class="stat-value muted">${6 - active}</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">今日订单 / Sessions</span>
-          <span class="stat-value muted">${todaySessions()}</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">今日收入 / Revenue</span>
-          <span class="stat-value green">${sym}${todayRevenue()}</span>
-        </div>
+        <div class="stat-card"><span class="stat-label">使用中 / Active</span><span class="stat-value cyan">${activeCount}</span></div>
+        <div class="stat-card"><span class="stat-label">空闲 / Idle</span><span class="stat-value muted">${6 - activeCount}</span></div>
+        <div class="stat-card"><span class="stat-label">今日订单 / Sessions</span><span class="stat-value muted">${todaySessions()}</span></div>
+        <div class="stat-card"><span class="stat-label">今日收入 / Revenue</span><span class="stat-value green">${sym}${todayRevenue()}</span></div>
       </div>
       <div class="stations-grid">`;
 
     stations.forEach(st => {
-      const on = st.status === 'active';
+      const players = GC.Store.getActiveSessionsForStation(st.id);
+      const on = players.length > 0;
       const typeClass = st.type === 'PS5' ? 'ps5' : 'switch';
-      const { rate, rateTier, regularRate } = GC.Store.getRateFor(st.type, st.memberId);
+      const { rate, rateTier, regularRate } = GC.Store.getRateFor(st.type, null);
+      const maxPlayers = settings.maxPlayersPerStation;
+      const canAdd = players.length < maxPlayers;
 
-      let playerName = '散客 / Walk-in';
-      let memberTier = '';
-      if (st.memberId) {
-        const m = GC.Store.getMember(st.memberId);
-        if (m) {
-          playerName = m.name;
-          memberTier = tierLabel(m.tier);
-        }
-      }
-
-      // Rate badge — show promo or member discount
       let rateBadge = '';
-      if (rateTier === 'promo') {
-        rateBadge = `<span class="rate-promo-tag">PROMO</span>`;
-      } else if (rateTier !== 'regular') {
-        rateBadge = `<span class="rate-member-tag">${rateTier.toUpperCase()}</span>`;
-      }
+      if (rateTier === 'promo') rateBadge = `<span class="rate-promo-tag">PROMO</span>`;
 
       html += `
         <div class="station-card ${on ? 'active' : 'idle'} ${typeClass}">
@@ -126,33 +205,36 @@ GC.Dashboard = (function () {
               <span class="type-badge ${typeClass}">${st.type}</span>
               <h3 class="station-name">${st.name}</h3>
             </div>
-            <span class="status-dot ${on ? 'active' : 'idle'}">${on ? '使用中 Active' : '空闲 Idle'}</span>
-          </div>
+            <span class="status-dot ${on ? 'active' : 'idle'}">${on ? `${players.length}/${maxPlayers} 玩家` : '空闲 Idle'}</span>
+          </div>`;
+
+      if (!on) {
+        // Idle state
+        html += `
           <div class="station-body">
-            ${on ? `
-              <div class="timer-display" data-start="${st.startTime}">${fmt(Date.now() - st.startTime)}</div>
-              <div class="player-info">
-                <span class="player-name">${playerName}${memberTier ? ' ' + memberTier : ''}</span>
-                <span class="rate-tag">${sym}${rate}/h ${rateBadge}</span>
+            <div class="idle-display">
+              <div class="idle-icon">${st.type === 'PS5' ? '🎮' : '🕹️'}</div>
+              <div class="idle-rate">
+                ${rateTier === 'promo' ? `<span class="rate-original-strike">${sym}${regularRate}</span> ` : ''}<strong>${sym}${rate}</strong><small>/小时 hr</small> ${rateBadge}
               </div>
-              <div class="running-cost" data-start="${st.startTime}" data-rate="${rate}">${sym}${runningCost(st)}</div>
-            ` : `
-              <div class="idle-display">
-                <div class="idle-icon">${st.type === 'PS5' ? '🎮' : '🕹️'}</div>
-                <div class="idle-rate">
-                  ${rateTier === 'promo' ? `<span class="rate-original-strike">${sym}${regularRate}</span> ` : ''}<strong>${sym}${rate}</strong><small>/小时 hr</small>
-                  ${rateBadge}
-                </div>
-              </div>
-            `}
+            </div>
           </div>
           <div class="station-footer">
-            ${on
-              ? `<button class="btn btn-danger btn-block btn-stop" data-id="${st.id}">关桌结算 / Close & Bill</button>`
-              : `<button class="btn btn-primary btn-block btn-start" data-id="${st.id}">开桌 / Open Table</button>`
-            }
-          </div>
-        </div>`;
+            <button class="btn btn-primary btn-block btn-start" data-id="${st.id}">开桌 / Open Table</button>
+          </div>`;
+      } else {
+        // Active: render player list
+        html += `<div class="players-list">`;
+        players.forEach(p => {
+          html += renderPlayerRow(p, sym, settings);
+        });
+        html += `</div>
+          <div class="station-footer station-footer-multi">
+            ${canAdd ? `<button class="btn btn-secondary btn-sm btn-add-player" data-id="${st.id}">+ 加人 / Add</button>` : ''}
+          </div>`;
+      }
+
+      html += `</div>`;
     });
 
     html += '</div>';
@@ -161,23 +243,87 @@ GC.Dashboard = (function () {
     startTimer();
   }
 
+  function renderPlayerRow(p, sym, settings) {
+    const isWalkIn = !p.memberId;
+    const member = p.memberId ? GC.Store.getMember(p.memberId) : null;
+    const now = Date.now();
+    const elapsedMs = now - p.startTime;
+
+    let playerLabel, runningCost, timerHtml, warningClass = '', warningTag = '';
+
+    if (isWalkIn) {
+      // Walk-in: countdown from expected end
+      const remaining = (p.expectedEndTime || now) - now;
+      const totalPaid = p.paidMinutes;
+      const isWarn = remaining <= settings.warnMinutes * 60000 && remaining > 0;
+      const isOver = remaining <= 0;
+      if (isWarn) warningClass = 'player-warn';
+      if (isOver) { warningClass = 'player-over'; warningTag = '<span class="warning-tag">时间到</span>'; }
+      else if (isWarn) warningTag = `<span class="warning-tag">${Math.ceil(remaining/60000)}分钟`;
+
+      playerLabel = `${p.guestName || '散客'} <small class="player-meta">${totalPaid/60}h 套餐 · ${sym}${p.total.toFixed(2)}</small>`;
+      timerHtml = `<span class="player-timer" data-session="${p.id}" data-mode="countdown" data-expected="${p.expectedEndTime}">${fmtClock(remaining)}</span>`;
+      runningCost = '';
+    } else {
+      // Member: count-up, running cost from balance
+      const { rate } = GC.Store.getRateFor(p.stationType, p.memberId);
+      const elapsedCost = (elapsedMs / 3600000) * rate;
+      const balanceAfter = Math.max(0, (member?.balance || 0) - elapsedCost);
+      const warn = balanceAfter / rate * 60 <= settings.warnMinutes && balanceAfter > 0;
+      const depleted = balanceAfter <= 0;
+      if (warn) warningClass = 'player-warn';
+      if (depleted) { warningClass = 'player-over'; warningTag = '<span class="warning-tag">余额耗尽</span>'; }
+      else if (warn) warningTag = `<span class="warning-tag">余额 ${sym}${balanceAfter.toFixed(2)}</span>`;
+
+      playerLabel = `${tierIcon(member?.tier)} ${member?.name || '?'} <small class="player-meta">${tierLabel(member?.tier)} · 余额 ${sym}${(member?.balance || 0).toFixed(2)}</small>`;
+      timerHtml = `<span class="player-timer" data-session="${p.id}" data-mode="countup" data-start="${p.startTime}">${fmtClock(elapsedMs)}</span>`;
+      runningCost = `<span class="player-cost" data-session="${p.id}" data-rate="${rate}" data-start="${p.startTime}">${sym}${elapsedCost.toFixed(2)}</span>`;
+    }
+
+    return `
+      <div class="player-row ${warningClass}">
+        <div class="player-info">
+          <div class="player-name-line">${playerLabel} ${warningTag}</div>
+        </div>
+        <div class="player-stats">
+          ${timerHtml}
+          ${runningCost}
+        </div>
+        <div class="player-actions">
+          ${isWalkIn ? `<button class="btn-icon btn-extend" data-session="${p.id}" title="加 1 小时 / +1 Hour">+1h</button>` : ''}
+          <button class="btn-icon btn-close-player" data-session="${p.id}" title="结账 / Close">✓</button>
+        </div>
+      </div>`;
+  }
+
+  /* ---- Timer ---- */
   function startTimer() {
     stopTimer();
     timerInterval = setInterval(() => {
       const settings = GC.Store.getSettings();
-      const sym = settings.currencySymbol;
-      document.querySelectorAll('.timer-display').forEach(el => {
-        const start = parseInt(el.dataset.start);
-        if (start) el.textContent = fmt(Date.now() - start);
+      const sym = settings?.currencySymbol || '$';
+      const now = Date.now();
+
+      document.querySelectorAll('.player-timer').forEach(el => {
+        const mode = el.dataset.mode;
+        if (mode === 'countdown') {
+          const expected = parseInt(el.dataset.expected);
+          el.textContent = fmtClock(expected - now);
+        } else {
+          const start = parseInt(el.dataset.start);
+          el.textContent = fmtClock(now - start);
+        }
       });
-      document.querySelectorAll('.running-cost').forEach(el => {
+
+      document.querySelectorAll('.player-cost').forEach(el => {
         const start = parseInt(el.dataset.start);
         const rate = parseFloat(el.dataset.rate);
         if (!start || !rate) return;
-        const mins = (Date.now() - start) / 60000;
-        const cost = (mins / 60) * rate;
+        const cost = ((now - start) / 3600000) * rate;
         el.textContent = `${sym}${cost.toFixed(2)}`;
       });
+
+      checkWarnings();
     }, 1000);
   }
 
@@ -185,107 +331,203 @@ GC.Dashboard = (function () {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   }
 
+  /* ---- Events ---- */
   function bindEvents() {
     document.querySelectorAll('.btn-start').forEach(b =>
-      b.addEventListener('click', () => showStartModal(parseInt(b.dataset.id))));
-    document.querySelectorAll('.btn-stop').forEach(b =>
-      b.addEventListener('click', () => showSettlement(parseInt(b.dataset.id))));
+      b.addEventListener('click', () => showOpenTableModal(parseInt(b.dataset.id))));
+    document.querySelectorAll('.btn-add-player').forEach(b =>
+      b.addEventListener('click', () => showOpenTableModal(parseInt(b.dataset.id))));
+    document.querySelectorAll('.btn-close-player').forEach(b =>
+      b.addEventListener('click', () => closePlayer(b.dataset.session)));
+    document.querySelectorAll('.btn-extend').forEach(b =>
+      b.addEventListener('click', () => extendWalkIn(b.dataset.session)));
   }
 
-  function showStartModal(id) {
-    const st = GC.Store.getStation(id);
-    const members = GC.Store.getMembers();
-    let opts = '<option value="">散客 / Walk-in (non-member)</option>';
-    members.forEach(m => {
-      const icon = m.tier === 'platinum' ? '💎' : m.tier === 'silver' ? '🥈' : '👤';
-      opts += `<option value="${m.id}">${icon} ${m.name}${m.phone ? ' (' + m.phone + ')' : ''}</option>`;
-    });
+  /* ---- Open Table Modal ---- */
+  function showOpenTableModal(stationId) {
+    const st = GC.Store.getStation(stationId);
+    const settings = GC.Store.getSettings();
+    const sym = settings.currencySymbol;
+    const members = GC.Store.getMembers().filter(m => m.tier !== 'regular' || m.balance > 0);
+    const { rate, rateTier } = GC.Store.getRateFor(st.type, null);
+
+    const memberOptions = members.map(m => {
+      const icon = tierIcon(m.tier);
+      return `<option value="${m.id}">${icon} ${m.name} · ${tierLabel(m.tier)} · 余额 ${sym}${m.balance.toFixed(2)}</option>`;
+    }).join('');
 
     const modal = document.getElementById('modal');
     modal.innerHTML = `
       <div class="modal-overlay">
-        <div class="modal-content">
+        <div class="modal-content modal-wide">
           <div class="modal-header">
-            <h3>开桌 / Open Table — ${st.name} (${st.type})</h3>
+            <h3>开桌 / Open — ${st.name} (${st.type})</h3>
             <button class="modal-close" id="m-close">&times;</button>
           </div>
           <div class="modal-body">
-            <div class="form-group">
-              <label class="form-label">选择玩家 / Select Player</label>
-              <select id="sel-member" class="form-input">${opts}</select>
+            <div class="tab-bar">
+              <button class="tab-btn active" data-tab="walkin">👤 散客 / Walk-in</button>
+              <button class="tab-btn" data-tab="member">💎 会员 / Member</button>
+            </div>
+
+            <!-- Walk-in tab -->
+            <div class="tab-pane active" data-pane="walkin">
+              <div class="form-group">
+                <label class="form-label">玩家名字 (选填) / Name (optional)</label>
+                <input id="inp-guest-name" class="form-input" placeholder="例：A 先生">
+              </div>
+              <div class="form-group">
+                <label class="form-label">预付小时 / Pre-paid Hours</label>
+                <div class="hours-picker" id="hours-picker">
+                  ${[1,2,3,4,5].map(h => `<button type="button" class="hour-btn ${h===1?'selected':''}" data-h="${h}">${h}h</button>`).join('')}
+                </div>
+                <div class="form-hint">最少 1 小时，整点收费，不退款 · Min 1h, hourly blocks, no refund</div>
+              </div>
+              <div class="walkin-summary">
+                <div>费率 / Rate: <strong>${sym}${rate}/h</strong> ${rateTier === 'promo' ? '<span class="rate-promo-tag">PROMO</span>' : ''}</div>
+                <div>预付金额 / Total: <strong class="total-amount" id="walkin-total">${sym}${rate.toFixed(2)}</strong></div>
+              </div>
+            </div>
+
+            <!-- Member tab -->
+            <div class="tab-pane" data-pane="member">
+              <div class="form-group">
+                <label class="form-label">选择会员 / Select Member</label>
+                <select id="sel-member" class="form-input">
+                  ${memberOptions || '<option value="">无可用会员 / No members available</option>'}
+                </select>
+              </div>
+              <div class="member-summary" id="member-summary"></div>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
-            <button class="btn btn-primary" id="m-ok">确认开桌 / Confirm</button>
+            <button class="btn btn-primary" id="m-ok">确认 / Confirm</button>
           </div>
         </div>
       </div>`;
     modal.classList.add('show');
 
+    let selectedHours = 1;
+    let activeTab = 'walkin';
+
+    const updateMemberSummary = () => {
+      const mid = document.getElementById('sel-member').value;
+      const summary = document.getElementById('member-summary');
+      if (!mid) { summary.innerHTML = ''; return; }
+      const m = GC.Store.getMember(mid);
+      const { rate, rateTier } = GC.Store.getRateFor(st.type, mid);
+      const estMinutes = rate > 0 ? Math.floor((m.balance / rate) * 60) : 0;
+      summary.innerHTML = `
+        <div class="member-summary-card">
+          <div>当前余额 / Balance: <strong class="balance-amount">${sym}${m.balance.toFixed(2)}</strong></div>
+          <div>会员费率 / Member Rate: <strong>${sym}${rate}/h</strong> ${rateTier === 'promo' ? '<span class="rate-promo-tag">PROMO</span>' : ''}</div>
+          <div>余额可玩 / Time Left: <strong>${Math.floor(estMinutes/60)}h ${estMinutes%60}m</strong></div>
+        </div>`;
+    };
+
+    const updateWalkinTotal = () => {
+      document.getElementById('walkin-total').textContent = `${sym}${(rate * selectedHours).toFixed(2)}`;
+    };
+
+    // Tab switching
+    modal.querySelectorAll('.tab-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        activeTab = b.dataset.tab;
+        modal.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('active', x === b));
+        modal.querySelectorAll('.tab-pane').forEach(x => x.classList.toggle('active', x.dataset.pane === activeTab));
+      });
+    });
+
+    // Hours buttons
+    modal.querySelectorAll('.hour-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        modal.querySelectorAll('.hour-btn').forEach(x => x.classList.toggle('selected', x === b));
+        selectedHours = parseInt(b.dataset.h);
+        updateWalkinTotal();
+      });
+    });
+
+    document.getElementById('sel-member').addEventListener('change', updateMemberSummary);
+    updateMemberSummary();
+
     const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
     document.getElementById('m-close').onclick = close;
     document.getElementById('m-cancel').onclick = close;
     document.getElementById('m-ok').onclick = async () => {
-      const mid = document.getElementById('sel-member').value || null;
-      await GC.Store.updateStation(id, { status: 'active', startTime: Date.now(), memberId: mid });
-      close();
-      render();
-      GC.toast('已开桌 / Opened — ' + st.name, 'success');
+      try {
+        if (activeTab === 'walkin') {
+          const guestName = document.getElementById('inp-guest-name').value.trim() || null;
+          await GC.Store.openSession({
+            stationId: st.id, stationName: st.name, stationType: st.type,
+            memberId: null, guestName, hours: selectedHours,
+          });
+          GC.toast(`已开桌 / Opened — ${st.name} · ${sym}${(rate * selectedHours).toFixed(2)}`, 'success');
+        } else {
+          const mid = document.getElementById('sel-member').value;
+          if (!mid) { GC.toast('请选择会员 / Please select a member', 'error'); return; }
+          const m = GC.Store.getMember(mid);
+          if (m.balance <= 0) {
+            if (!confirm(`${m.name} 当前余额为 ${sym}0。仍然开桌吗？（需先充值）`)) return;
+          }
+          await GC.Store.openSession({
+            stationId: st.id, stationName: st.name, stationType: st.type,
+            memberId: mid, hours: 0,
+          });
+          GC.toast(`已开桌 / Opened — ${st.name} · ${m.name}`, 'success');
+        }
+        close();
+        render();
+      } catch (e) {
+        GC.toast('开桌失败 / Failed: ' + e.message, 'error');
+      }
     };
   }
 
-  function showSettlement(id) {
-    const st = GC.Store.getStation(id);
+  /* ---- Close player ---- */
+  async function closePlayer(sessionId) {
+    const session = GC.Store.getSessions().find(s => s.id === sessionId);
+    if (!session) return;
     const settings = GC.Store.getSettings();
     const sym = settings.currencySymbol;
-    const endTime = Date.now();
-    const durMs = endTime - st.startTime;
-    const durMin = durMs / 60000;
-    const bill = GC.Store.calculateBill(st.type, durMin, st.memberId);
 
-    let playerName = '散客 / Walk-in';
-    let tierTag = '';
-    if (st.memberId) {
-      const m = GC.Store.getMember(st.memberId);
-      if (m) {
-        playerName = m.name;
-        tierTag = tierLabel(m.tier);
-      }
+    if (session.memberId) {
+      await showMemberCloseModal(session);
+    } else {
+      await showWalkInCloseModal(session);
     }
+  }
 
-    let discountLabel = '';
-    if (bill.rateTier === 'promo') discountLabel = `促销优惠 / Promo (${bill.discountPercent}% off)`;
-    else if (bill.rateTier === 'silver') discountLabel = `Silver 会员优惠 / Member (${bill.discountPercent}% off)`;
-    else if (bill.rateTier === 'platinum') discountLabel = `Platinum 会员优惠 / Member (${bill.discountPercent}% off)`;
+  async function showWalkInCloseModal(session) {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const elapsedMs = Date.now() - session.startTime;
+    const elapsedMin = elapsedMs / 60000;
+    const remaining = (session.expectedEndTime || Date.now()) - Date.now();
+    const overtime = remaining < 0;
 
     const modal = document.getElementById('modal');
     modal.innerHTML = `
       <div class="modal-overlay">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>结算 / Checkout — ${st.name}</h3>
+            <h3>结账 / Close — ${session.stationName}</h3>
             <button class="modal-close" id="m-close">&times;</button>
           </div>
           <div class="modal-body">
             <div class="settlement-details">
-              <div class="settlement-row"><span>机台 / Station</span><span>${st.name} (${st.type})</span></div>
-              <div class="settlement-row"><span>玩家 / Player</span><span>${playerName} ${tierTag}</span></div>
-              <div class="settlement-row"><span>开始 / Start</span><span>${fmtDate(st.startTime)} ${fmtTime(st.startTime)}</span></div>
-              <div class="settlement-row"><span>结束 / End</span><span>${fmtDate(endTime)} ${fmtTime(endTime)}</span></div>
-              <div class="settlement-row"><span>时长 / Duration</span><span>${fmt(durMs)}</span></div>
+              <div class="settlement-row"><span>玩家 / Player</span><span>${session.guestName || '散客'}</span></div>
+              <div class="settlement-row"><span>预付 / Pre-paid</span><span>${session.paidMinutes/60}h · ${sym}${session.total.toFixed(2)}</span></div>
+              <div class="settlement-row"><span>实际游玩 / Actual</span><span>${fmtClock(elapsedMs)}</span></div>
+              ${overtime ? `<div class="settlement-row" style="color:var(--red)"><span>超时 / Overtime</span><span>${Math.ceil(-remaining/60000)} 分钟</span></div>` : ''}
               <div class="settlement-divider"></div>
-              <div class="settlement-row"><span>原价 / Original Rate</span><span>${sym}${bill.regularRate}/h</span></div>
-              ${bill.discountPercent > 0 ? `<div class="settlement-row"><span>实际费率 / Applied Rate</span><span class="rate-applied">${sym}${bill.rate}/h</span></div>` : ''}
-              <div class="settlement-row"><span>小计 / Subtotal</span><span>${sym}${bill.subtotal.toFixed(2)}</span></div>
-              ${bill.discountPercent > 0 ? `<div class="settlement-row discount"><span>${discountLabel}</span><span>-${sym}${bill.discount.toFixed(2)}</span></div>` : ''}
-              <div class="settlement-divider"></div>
-              <div class="settlement-row total"><span>应收 / Total</span><span>${sym}${bill.total.toFixed(2)}</span></div>
+              <div class="settlement-row total"><span>应收 / Total</span><span>${sym}${session.total.toFixed(2)}</span></div>
+              <div class="form-hint" style="margin-top:8px">预付时间，不退款 · Pre-paid, no refund</div>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
-            <button class="btn btn-primary" id="m-ok">确认结算 / Confirm</button>
+            ${overtime ? `<button class="btn btn-primary" id="m-extend">加 1 小时 / +1h</button>` : ''}
+            <button class="btn btn-danger" id="m-close-now">确认结账 / Close</button>
           </div>
         </div>
       </div>`;
@@ -294,26 +536,89 @@ GC.Dashboard = (function () {
     const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
     document.getElementById('m-close').onclick = close;
     document.getElementById('m-cancel').onclick = close;
-    document.getElementById('m-ok').onclick = async () => {
-      await GC.Store.addSession({
-        stationId: st.id, stationName: st.name, stationType: st.type,
-        memberId: st.memberId, startTime: st.startTime, endTime,
-        durationMinutes: bill.durationMinutes,
-        rate: bill.rate, subtotal: bill.subtotal,
-        discountPercent: bill.discountPercent, discount: bill.discount, total: bill.total,
-      });
-      if (st.memberId) {
-        const m = GC.Store.getMember(st.memberId);
-        if (m) await GC.Store.updateMember(st.memberId, {
-          totalSpent: m.totalSpent + bill.total,
-          totalMinutes: m.totalMinutes + bill.durationMinutes,
-        });
-      }
-      await GC.Store.updateStation(id, { status: 'idle', startTime: null, memberId: null });
+    if (overtime) {
+      document.getElementById('m-extend').onclick = async () => {
+        await GC.Store.extendWalkIn(session.id, 1);
+        close();
+        render();
+        GC.toast('已加 1 小时 / +1h added', 'success');
+      };
+    }
+    document.getElementById('m-close-now').onclick = async () => {
+      await GC.Store.closeSession(session.id);
       close();
       render();
-      GC.toast(`已结算 / Settled ${sym}${bill.total.toFixed(2)}`, 'success');
+      GC.toast(`已结账 / Closed — ${sym}${session.total.toFixed(2)}`, 'success');
     };
+  }
+
+  async function showMemberCloseModal(session) {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const m = GC.Store.getMember(session.memberId);
+    const elapsedMs = Date.now() - session.startTime;
+    const elapsedMin = elapsedMs / 60000;
+    const bill = GC.Store.computeMemberBill(session.stationType, elapsedMin, session.memberId);
+    const newBalance = Math.max(0, m.balance - bill.total);
+
+    let discountLabel = '';
+    if (bill.rateTier === 'promo') discountLabel = `促销价 / Promo (${bill.discountPercent}% off)`;
+    else if (bill.rateTier !== 'regular') discountLabel = `${tierLabel(bill.rateTier)} 会员价 (${bill.discountPercent}% off)`;
+
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>结账 / Close — ${session.stationName}</h3>
+            <button class="modal-close" id="m-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="settlement-details">
+              <div class="settlement-row"><span>玩家 / Player</span><span>${tierIcon(m.tier)} ${m.name}</span></div>
+              <div class="settlement-row"><span>开始 / Start</span><span>${fmtTime(session.startTime)}</span></div>
+              <div class="settlement-row"><span>时长 / Duration</span><span>${fmtClock(elapsedMs)}</span></div>
+              <div class="settlement-divider"></div>
+              <div class="settlement-row"><span>原价 / Regular</span><span>${sym}${bill.regularRate}/h</span></div>
+              ${bill.discountPercent > 0 ? `<div class="settlement-row"><span>实际费率 / Applied</span><span class="rate-applied">${sym}${bill.rate}/h</span></div>` : ''}
+              <div class="settlement-row"><span>小计 / Subtotal</span><span>${sym}${bill.subtotal.toFixed(2)}</span></div>
+              ${bill.discountPercent > 0 ? `<div class="settlement-row discount"><span>${discountLabel}</span><span>-${sym}${bill.discount.toFixed(2)}</span></div>` : ''}
+              <div class="settlement-divider"></div>
+              <div class="settlement-row total"><span>本次应收 / Total</span><span>${sym}${bill.total.toFixed(2)}</span></div>
+              <div class="settlement-row" style="margin-top:6px"><span>余额 ${sym}${m.balance.toFixed(2)} → </span><span class="balance-after">${sym}${newBalance.toFixed(2)}</span></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
+            <button class="btn btn-primary" id="m-close-now">确认 / Confirm</button>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('m-close').onclick = close;
+    document.getElementById('m-cancel').onclick = close;
+    document.getElementById('m-close-now').onclick = async () => {
+      await GC.Store.closeSession(session.id);
+      close();
+      render();
+      GC.toast(`已结账 / Closed — ${sym}${bill.total.toFixed(2)}`, 'success');
+    };
+  }
+
+  /* ---- Extend walk-in (+1h) ---- */
+  async function extendWalkIn(sessionId) {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const session = GC.Store.getSessions().find(s => s.id === sessionId);
+    if (!session) return;
+    const { rate } = GC.Store.getRateFor(session.stationType, null);
+    if (!confirm(`加 1 小时？\n+1 hour for ${session.guestName || '散客'}?\n\n费用 / Cost: ${sym}${rate.toFixed(2)}`)) return;
+    await GC.Store.extendWalkIn(sessionId, 1);
+    // Reset warning state for this session
+    _warned.delete(sessionId);
+    _warned.delete(sessionId + '_up');
+    render();
+    GC.toast(`+1h · ${sym}${rate.toFixed(2)}`, 'success');
   }
 
   function destroy() { stopTimer(); }

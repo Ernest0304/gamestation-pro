@@ -18,7 +18,7 @@ GC.Settings = (function () {
       <div class="settings-section promo-section ${s.promoActive ? 'active' : ''}">
         <div class="settings-title">
           🎮 开业促销 / Opening Promotion
-          <label class="switch" style="margin-left:auto">
+          <label class="toggle-switch" style="margin-left:auto">
             <input type="checkbox" id="promo-toggle" ${s.promoActive ? 'checked' : ''}>
             <span class="slider"></span>
           </label>

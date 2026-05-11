@@ -658,15 +658,15 @@ select.form-input { appearance: none; cursor: pointer;
 .rate-applied { color: var(--cyan); font-weight: 600; }
 
 /* ===== Toggle Switch ===== */
-.switch {
+.toggle-switch {
   position: relative;
   display: inline-block;
   width: 46px; height: 24px;
 }
-.switch input {
+.toggle-switch input {
   opacity: 0; width: 0; height: 0;
 }
-.switch .slider {
+.toggle-switch .slider {
   position: absolute; cursor: pointer;
   inset: 0;
   background: var(--bg-input);
@@ -674,7 +674,7 @@ select.form-input { appearance: none; cursor: pointer;
   border-radius: 24px;
   transition: 0.25s;
 }
-.switch .slider::before {
+.toggle-switch .slider::before {
   content: '';
   position: absolute;
   height: 18px; width: 18px;
@@ -683,11 +683,11 @@ select.form-input { appearance: none; cursor: pointer;
   border-radius: 50%;
   transition: 0.25s;
 }
-.switch input:checked + .slider {
+.toggle-switch input:checked + .slider {
   background: linear-gradient(135deg, #8b5cf6, #06b6d4);
   border-color: transparent;
 }
-.switch input:checked + .slider::before {
+.toggle-switch input:checked + .slider::before {
   transform: translateX(22px);
   background: #fff;
 }

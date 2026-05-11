@@ -89,9 +89,13 @@ window.GC = window.GC || {};
       }
     });
 
-    // Check existing session
+    // Check existing session with 6s timeout to avoid forever loading
     try {
-      const { data: { session } } = await GC.supabase.auth.getSession();
+      const sessionPromise = GC.supabase.auth.getSession();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('auth timeout')), 6000)
+      );
+      const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
       if (session) {
         await bootApp();
       } else {

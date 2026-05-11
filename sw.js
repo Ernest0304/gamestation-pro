@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gamestation-v2';
+const CACHE_NAME = 'gamestation-v3';
 const ASSETS = [
   '/',
   '/index.html',

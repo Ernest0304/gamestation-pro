@@ -291,13 +291,16 @@ GC.History = (function () {
     // Table rows
     let rows = '';
     if (filtered.length === 0) {
-      rows = `<tr><td colspan="6" class="table-empty">暂无记录</td></tr>`;
+      rows = `<tr><td colspan="6" class="table-empty">暂无记录 / No records</td></tr>`;
     } else {
       filtered.forEach(s => {
-        let player = '散客';
+        let player = '散客 / Walk-in';
         if (s.memberId) {
           const m = GC.Store.getMember(s.memberId);
-          if (m) player = m.name;
+          if (m) {
+            const tierIcon = m.tier === 'platinum' ? '💎' : m.tier === 'silver' ? '🥈' : '';
+            player = `${tierIcon} ${m.name}`.trim();
+          }
         }
         rows += `
           <tr>
@@ -313,18 +316,18 @@ GC.History = (function () {
 
     document.getElementById('main-content').innerHTML = `
       <div class="page-header">
-        <h2 class="page-title">历史记录</h2>
+        <h2 class="page-title">历史记录 / History</h2>
         <div class="report-buttons">
-          <button class="btn btn-secondary btn-sm" id="dl-pdf">PDF 报表</button>
-          <button class="btn btn-secondary btn-sm" id="dl-excel">Excel 报表</button>
+          <button class="btn btn-secondary btn-sm" id="dl-pdf">📄 PDF 报表</button>
+          <button class="btn btn-secondary btn-sm" id="dl-excel">📊 Excel 报表</button>
         </div>
       </div>
 
       <!-- Mode tabs -->
       <div class="history-tabs">
-        <button class="history-tab ${mode === 'day' ? 'active' : ''}" data-mode="day">按日</button>
-        <button class="history-tab ${mode === 'month' ? 'active' : ''}" data-mode="month">按月</button>
-        <button class="history-tab ${mode === 'range' ? 'active' : ''}" data-mode="range">自定义</button>
+        <button class="history-tab ${mode === 'day' ? 'active' : ''}" data-mode="day">按日 / Daily</button>
+        <button class="history-tab ${mode === 'month' ? 'active' : ''}" data-mode="month">按月 / Monthly</button>
+        <button class="history-tab ${mode === 'range' ? 'active' : ''}" data-mode="range">自定义 / Custom</button>
       </div>
 
       <!-- Date selector -->
@@ -335,11 +338,11 @@ GC.History = (function () {
           <input type="month" id="sel-month" class="form-input" value="${selectedMonth}">
         ` : `
           <div class="range-inputs">
-            <label class="form-label" style="margin-bottom:0">从</label>
+            <label class="form-label" style="margin-bottom:0">从 / From</label>
             <input type="date" id="sel-from" class="form-input" value="${rangeFrom}">
-            <label class="form-label" style="margin-bottom:0">到</label>
+            <label class="form-label" style="margin-bottom:0">到 / To</label>
             <input type="date" id="sel-to" class="form-input" value="${rangeTo}">
-            <button class="btn btn-primary btn-sm" id="apply-range">查询</button>
+            <button class="btn btn-primary btn-sm" id="apply-range">查询 / Search</button>
           </div>
         `}
       </div>
@@ -347,15 +350,15 @@ GC.History = (function () {
       <!-- Stats -->
       <div class="stats-bar" style="margin-bottom:20px">
         <div class="stat-card">
-          <span class="stat-label">订单数</span>
+          <span class="stat-label">订单数 / Sessions</span>
           <span class="stat-value muted">${filtered.length}</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">总时长</span>
+          <span class="stat-label">总时长 / Duration</span>
           <span class="stat-value muted">${fmtDur(totalTime)}</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">总收入</span>
+          <span class="stat-label">总收入 / Revenue</span>
           <span class="stat-value green">${sym}${totalRev}</span>
         </div>
       </div>
@@ -369,7 +372,7 @@ GC.History = (function () {
       <div class="table-container" style="margin-top:20px">
         <table class="data-table">
           <thead>
-            <tr><th>时间</th><th>机台</th><th>类型</th><th>玩家</th><th>时长</th><th>金额</th></tr>
+            <tr><th>时间 / Time</th><th>机台 / Station</th><th>类型 / Type</th><th>玩家 / Player</th><th>时长 / Duration</th><th>金额 / Amount</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>

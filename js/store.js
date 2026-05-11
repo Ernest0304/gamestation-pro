@@ -17,18 +17,19 @@ GC.Store = (function () {
 
   function settingsToApp(row) {
     return {
-      rates: { PS5: Number(row.rate_ps5), 'Switch 2': Number(row.rate_switch2) },
+      rates: {
+        regular: { 'Switch 2': Number(row.rate_regular_switch2), 'PS5': Number(row.rate_regular_ps5) },
+        silver:  { 'Switch 2': Number(row.rate_silver_switch2),  'PS5': Number(row.rate_silver_ps5) },
+        platinum:{ 'Switch 2': Number(row.rate_platinum_switch2),'PS5': Number(row.rate_platinum_ps5) },
+        promo:   { 'Switch 2': Number(row.rate_promo_switch2),   'PS5': Number(row.rate_promo_ps5) },
+      },
+      promoActive: !!row.promo_active,
+      memberFees: {
+        silver: Number(row.member_fee_silver),
+        platinum: Number(row.member_fee_platinum),
+      },
       currency: row.currency,
       currencySymbol: row.currency_symbol,
-      memberDiscounts: {
-        bronze: Number(row.discount_bronze),
-        silver: Number(row.discount_silver),
-        gold: Number(row.discount_gold),
-      },
-      tierThresholds: {
-        silver: Number(row.threshold_silver),
-        gold: Number(row.threshold_gold),
-      },
       minBillingMinutes: Number(row.min_billing_minutes),
     };
   }
@@ -51,7 +52,7 @@ GC.Store = (function () {
       phone: row.phone || '',
       totalSpent: Number(row.total_spent),
       totalMinutes: Number(row.total_minutes),
-      tier: row.tier,
+      tier: row.tier || 'regular',
       createdAt: new Date(row.created_at).getTime(),
     };
   }
@@ -72,13 +73,6 @@ GC.Store = (function () {
       discount: Number(row.discount),
       total: Number(row.total),
     };
-  }
-
-  function computeTier(totalSpent) {
-    const s = _cache.settings;
-    if (totalSpent >= s.tierThresholds.gold) return 'gold';
-    if (totalSpent >= s.tierThresholds.silver) return 'silver';
-    return 'bronze';
   }
 
   /* ========== Init ========== */
@@ -110,7 +104,6 @@ GC.Store = (function () {
           const updated = stationToApp(payload.new);
           const idx = _cache.stations.findIndex(s => s.id === updated.id);
           if (idx >= 0) _cache.stations[idx] = updated;
-          // Re-render dashboard if it's the active view
           if (GC._currentView === 'dashboard' && GC.Dashboard) {
             GC.Dashboard.render();
           }
@@ -128,24 +121,54 @@ GC.Store = (function () {
   function getMember(id) { return _cache.members.find(m => m.id === id); }
   function getSessions() { return _cache.sessions; }
 
+  /**
+   * Pick the rate tier for a billing context:
+   * - Promo active → everyone gets promo rate
+   * - Member (silver/platinum) → tier rate
+   * - Otherwise → regular walk-in rate
+   */
+  function resolveRateTier(memberId) {
+    const s = _cache.settings;
+    if (s.promoActive) return 'promo';
+    if (memberId) {
+      const m = getMember(memberId);
+      if (m && m.tier && m.tier !== 'regular' && s.rates[m.tier]) return m.tier;
+    }
+    return 'regular';
+  }
+
+  function getRateFor(stationType, memberId) {
+    const s = _cache.settings;
+    const tier = resolveRateTier(memberId);
+    return {
+      rate: s.rates[tier][stationType] || 0,
+      rateTier: tier,
+      regularRate: s.rates.regular[stationType] || 0,
+    };
+  }
+
   function calculateBill(stationType, durationMinutes, memberId) {
     const s = _cache.settings;
     const billableMinutes = Math.max(durationMinutes, s.minBillingMinutes || 0);
-    const rate = s.rates[stationType] || 15;
-    const subtotal = (billableMinutes / 60) * rate;
-    let discountPercent = 0;
-    if (memberId) {
-      const m = getMember(memberId);
-      if (m) discountPercent = s.memberDiscounts[m.tier] || 0;
-    }
-    const discount = subtotal * (discountPercent / 100);
+    const { rate, rateTier, regularRate } = getRateFor(stationType, memberId);
+
+    // Subtotal at regular rate, then show discount if actual rate is lower
+    const subtotal = Math.round((billableMinutes / 60) * regularRate * 100) / 100;
+    const total = Math.round((billableMinutes / 60) * rate * 100) / 100;
+    const discount = Math.round((subtotal - total) * 100) / 100;
+    const discountPercent = regularRate > 0
+      ? Math.round((1 - rate / regularRate) * 100)
+      : 0;
+
     return {
       rate,
+      rateTier,
+      regularRate,
       durationMinutes: billableMinutes,
-      subtotal: Math.round(subtotal * 100) / 100,
+      subtotal,
+      discount,
       discountPercent,
-      discount: Math.round(discount * 100) / 100,
-      total: Math.round((subtotal - discount) * 100) / 100,
+      total,
     };
   }
 
@@ -159,7 +182,6 @@ GC.Store = (function () {
 
     await sb.from('stations').update(dbPatch).eq('id', id);
 
-    // Optimistic cache update (realtime will confirm)
     const idx = _cache.stations.findIndex(s => s.id === id);
     if (idx >= 0) _cache.stations[idx] = { ..._cache.stations[idx], ...patch };
   }
@@ -186,7 +208,11 @@ GC.Store = (function () {
   }
 
   async function addMember(memberData) {
-    const row = { name: memberData.name, phone: memberData.phone || '' };
+    const row = {
+      name: memberData.name,
+      phone: memberData.phone || '',
+      tier: memberData.tier || 'regular',
+    };
     const { data } = await sb.from('members').insert(row).select().single();
     const appMember = memberToApp(data);
     _cache.members.push(appMember);
@@ -198,14 +224,13 @@ GC.Store = (function () {
     if (idx < 0) return null;
 
     const updated = { ..._cache.members[idx], ...patch };
-    updated.tier = computeTier(updated.totalSpent);
 
     const dbPatch = {};
     if ('name' in patch) dbPatch.name = patch.name;
     if ('phone' in patch) dbPatch.phone = patch.phone;
     if ('totalSpent' in patch) dbPatch.total_spent = updated.totalSpent;
     if ('totalMinutes' in patch) dbPatch.total_minutes = updated.totalMinutes;
-    dbPatch.tier = updated.tier;
+    if ('tier' in patch) dbPatch.tier = updated.tier;
 
     await sb.from('members').update(dbPatch).eq('id', id);
     _cache.members[idx] = updated;
@@ -219,20 +244,30 @@ GC.Store = (function () {
 
   async function saveSettings(appSettings) {
     const row = {
-      rate_ps5: appSettings.rates.PS5,
-      rate_switch2: appSettings.rates['Switch 2'],
+      rate_regular_switch2: appSettings.rates.regular['Switch 2'],
+      rate_regular_ps5: appSettings.rates.regular['PS5'],
+      rate_silver_switch2: appSettings.rates.silver['Switch 2'],
+      rate_silver_ps5: appSettings.rates.silver['PS5'],
+      rate_platinum_switch2: appSettings.rates.platinum['Switch 2'],
+      rate_platinum_ps5: appSettings.rates.platinum['PS5'],
+      rate_promo_switch2: appSettings.rates.promo['Switch 2'],
+      rate_promo_ps5: appSettings.rates.promo['PS5'],
+      promo_active: appSettings.promoActive,
+      member_fee_silver: appSettings.memberFees.silver,
+      member_fee_platinum: appSettings.memberFees.platinum,
       currency: appSettings.currency,
       currency_symbol: appSettings.currencySymbol,
       min_billing_minutes: appSettings.minBillingMinutes,
-      discount_bronze: appSettings.memberDiscounts.bronze,
-      discount_silver: appSettings.memberDiscounts.silver,
-      discount_gold: appSettings.memberDiscounts.gold,
-      threshold_silver: appSettings.tierThresholds.silver,
-      threshold_gold: appSettings.tierThresholds.gold,
       updated_at: new Date().toISOString(),
     };
     await sb.from('settings').update(row).eq('id', 1);
     _cache.settings = appSettings;
+  }
+
+  async function togglePromo(active) {
+    const s = { ..._cache.settings, promoActive: !!active };
+    await saveSettings(s);
+    return s;
   }
 
   async function clearSessions() {
@@ -246,12 +281,16 @@ GC.Store = (function () {
       sb.from('members').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
       sb.from('stations').update({ status: 'idle', start_time: null, member_id: null }).neq('id', 0),
       sb.from('settings').update({
-        rate_ps5: 15, rate_switch2: 15, currency: 'SGD', currency_symbol: '$',
-        min_billing_minutes: 0, discount_bronze: 0, discount_silver: 5, discount_gold: 10,
-        threshold_silver: 200, threshold_gold: 500,
+        rate_regular_switch2: 15, rate_regular_ps5: 16,
+        rate_silver_switch2: 12, rate_silver_ps5: 13,
+        rate_platinum_switch2: 7, rate_platinum_ps5: 8,
+        rate_promo_switch2: 5, rate_promo_ps5: 6,
+        promo_active: true,
+        member_fee_silver: 100, member_fee_platinum: 300,
+        currency: 'SGD', currency_symbol: '$',
+        min_billing_minutes: 0,
       }).eq('id', 1),
     ]);
-    // Reload cache
     await init();
   }
 
@@ -269,18 +308,17 @@ GC.Store = (function () {
   async function importData(json) {
     const data = JSON.parse(json);
 
-    // Restore members
     if (data.members && data.members.length > 0) {
       await sb.from('members').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       const memberRows = data.members.map(m => ({
         id: m.id, name: m.name, phone: m.phone || '',
         total_spent: m.totalSpent, total_minutes: m.totalMinutes,
-        tier: m.tier, created_at: new Date(m.createdAt).toISOString(),
+        tier: m.tier === 'bronze' ? 'regular' : (m.tier === 'gold' ? 'platinum' : (m.tier || 'regular')),
+        created_at: new Date(m.createdAt).toISOString(),
       }));
       await sb.from('members').insert(memberRows);
     }
 
-    // Restore sessions
     if (data.sessions && data.sessions.length > 0) {
       await sb.from('sessions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       const sessionRows = data.sessions.map(s => ({
@@ -292,7 +330,6 @@ GC.Store = (function () {
       await sb.from('sessions').insert(sessionRows);
     }
 
-    // Restore settings
     if (data.settings) {
       await saveSettings(data.settings);
     }
@@ -307,11 +344,11 @@ GC.Store = (function () {
     // Sync reads
     getSettings, getStations, getStation,
     getMembers, getMember, getSessions,
-    calculateBill,
+    calculateBill, getRateFor, resolveRateTier,
     // Async writes
     updateStation, addSession,
     addMember, updateMember, deleteMember,
-    saveSettings, clearSessions, resetAll,
+    saveSettings, togglePromo, clearSessions, resetAll,
     // Export / Import
     exportData, importData,
   };

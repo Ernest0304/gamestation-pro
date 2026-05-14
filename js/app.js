@@ -145,12 +145,17 @@ window.GC = window.GC || {};
      click to switch; cashier sees their branch locked. Re-renders the
      current view on switch so menu/orders/etc. reflect the new branch.
   */
+  // Re-entrancy token so two concurrent calls (e.g. event listener + direct
+  // call after a branch switch) can't both append a chip — last call wins.
+  let _branchSwitcherToken = 0;
   async function renderBranchSwitcher() {
     const navbar = document.querySelector('.navbar');
     if (!navbar) return;
+    const myToken = ++_branchSwitcherToken;
 
-    let existing = document.getElementById('branch-switcher');
-    if (existing) existing.remove();
+    // Remove ALL existing chips (defensive: use class, not id, so duplicates
+    // from prior races also get cleaned up).
+    document.querySelectorAll('.branch-switcher').forEach(el => el.remove());
 
     const branches = GC.Store.getBranches();
     if (!branches || branches.length === 0) return;
@@ -224,10 +229,10 @@ window.GC = window.GC || {};
       b.addEventListener('click', () => {
         const id = b.dataset.branch;
         if (id !== currentId) {
+          // setCurrentBranchId fires 'gc:branch-change' which the global
+          // listener catches → renderBranchSwitcher + view re-render.
+          // Don't call them directly here (was duplicating chip in nav).
           GC.Store.setCurrentBranchId(id);
-          // Re-render switcher chip + current view
-          renderBranchSwitcher();
-          if (GC._currentView && views[GC._currentView]) views[GC._currentView].render();
           if (GC.toast) GC.toast('已切换分店 / Branch switched', 'success');
         }
         close();

@@ -327,11 +327,11 @@ body.pos-mode .form-label { color: #6b5840; }
   margin-bottom: 10px;
   line-height: 1.2;
   min-height: 16px;
-  /* Allow up to 2 lines without pushing bottom row out */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* Allow any line count — was -webkit-line-clamp:2 which clipped
+     long EN names (#9, #34, #35, #55-57, #63 etc.). Bottom row stays
+     anchored via flex margin-top:auto, so cards just grow taller as
+     needed. Grid row picks up the tallest card height automatically. */
+  word-break: break-word;
 }
 .pos-item-bottom {
   display: flex; align-items: center; justify-content: space-between;

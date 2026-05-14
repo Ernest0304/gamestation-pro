@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POS Design Samples</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Inter', sans-serif;
+    background: #06090f;
+    color: #f1f5f9;
+    min-height: 100vh;
+    padding: 40px 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 2rem; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.02em; }
+  .subtitle { color: #94a3b8; margin-bottom: 40px; }
+  .samples { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .sample {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 16px;
+    padding: 28px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .sample:hover {
+    transform: translateY(-4px);
+    border-color: #06b6d4;
+    box-shadow: 0 12px 32px rgba(6,182,212,0.15);
+  }
+  .sample-letter {
+    font-size: 4rem; font-weight: 900;
+    background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+    line-height: 1;
+  }
+  .sample-name { font-size: 1.15rem; font-weight: 700; margin-bottom: 8px; }
+  .sample-desc { font-size: 0.85rem; color: #94a3b8; margin-bottom: 16px; }
+  .sample-tags { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .tag {
+    font-size: 0.7rem;
+    padding: 3px 10px; border-radius: 12px;
+    background: rgba(6,182,212,0.1); color: #06b6d4;
+    border: 1px solid rgba(6,182,212,0.2);
+  }
+  .tag.warm { background: rgba(245,158,11,0.1); color: #f59e0b; border-color: rgba(245,158,11,0.2); }
+  .tag.green { background: rgba(16,185,129,0.1); color: #10b981; border-color: rgba(16,185,129,0.2); }
+  @media (max-width: 800px) {
+    .samples { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>YXD POS · 设计样品</h1>
+  <p class="subtitle">3 种不同方向的 POS 界面设计 · Click to view full screen</p>
+
+  <div class="samples">
+    <a href="sample-a-classic.html" class="sample">
+      <div class="sample-letter">A</div>
+      <div class="sample-name">Classic Grid POS</div>
+      <div class="sample-desc">经典网格收银<br/>行业标准 · Square / Toast 风格</div>
+      <div class="sample-tags">
+        <span class="tag">深色主题</span>
+        <span class="tag">大瓦片</span>
+        <span class="tag">熟悉感</span>
+      </div>
+    </a>
+
+    <a href="sample-b-cafe.html" class="sample">
+      <div class="sample-letter">B</div>
+      <div class="sample-name">Boutique Cafe</div>
+      <div class="sample-desc">精品咖啡店风<br/>暖色调 · 温馨高端</div>
+      <div class="sample-tags">
+        <span class="tag warm">奶咖配色</span>
+        <span class="tag warm">视觉系</span>
+        <span class="tag warm">高端感</span>
+      </div>
+    </a>
+
+    <a href="sample-c-compact.html" class="sample">
+      <div class="sample-letter">C</div>
+      <div class="sample-name">Compact Power</div>
+      <div class="sample-desc">紧凑高效列表<br/>信息密集 · 键盘快捷</div>
+      <div class="sample-tags">
+        <span class="tag green">高效率</span>
+        <span class="tag green">信息密度</span>
+        <span class="tag green">老手向</span>
+      </div>
+    </a>
+  </div>
+
+  <p style="text-align:center;margin-top:48px;color:#64748b;font-size:0.85rem">
+    选好后告诉我 A / B / C，我开始正式做。也可以让我把某个元素换一下，比如「我要 A 的布局但用 B 的颜色」。
+  </p>
+</div>
+</body>
+</html>

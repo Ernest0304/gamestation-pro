@@ -5,7 +5,10 @@ window.GC = window.GC || {};
 
 (function () {
   const views = {
+    pos: GC.POS,
     dashboard: GC.Dashboard,
+    orders: GC.Orders,
+    menu: GC.Menu,
     history: GC.History,
     members: GC.Members,
     settings: GC.Settings,
@@ -60,7 +63,7 @@ window.GC = window.GC || {};
       await GC.Store.init();
       GC.Auth.showNavbar();
       bindNav();
-      navigate('dashboard');
+      navigate('pos');
     } catch (e) {
       console.error('Boot failed:', e);
       booted = false;

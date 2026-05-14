@@ -1,8 +1,9 @@
-const CACHE_NAME = 'gamestation-v4';
+const CACHE_NAME = 'gamestation-v7';
 const ASSETS = [
   '/',
   '/index.html',
   '/css/style.css',
+  '/css/pos.css',
   '/js/supabase-config.js',
   '/js/store.js',
   '/js/auth.js',
@@ -10,6 +11,9 @@ const ASSETS = [
   '/js/history.js',
   '/js/members.js',
   '/js/settings.js',
+  '/js/pos.js',
+  '/js/menu.js',
+  '/js/orders.js',
   '/js/app.js',
   '/manifest.json',
 ];

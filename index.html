@@ -7,7 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>GameStation Pro — 电竞甜品店计费系统</title>
-  <link rel="stylesheet" href="css/style.css?v=6">
+  <link rel="stylesheet" href="css/style.css?v=7">
+  <link rel="stylesheet" href="css/pos.css?v=7">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 </head>
@@ -23,10 +24,13 @@
       <span>Game<span class="brand-accent">Station</span> Pro</span>
     </div>
     <div class="nav-links">
-      <a href="#" class="nav-link active" data-view="dashboard"><span class="nav-cn">主控台</span><small class="nav-en">Dashboard</small></a>
-      <a href="#" class="nav-link" data-view="history"><span class="nav-cn">历史</span><small class="nav-en">History</small></a>
-      <a href="#" class="nav-link" data-view="members"><span class="nav-cn">会员</span><small class="nav-en">Members</small></a>
-      <a href="#" class="nav-link" data-view="settings"><span class="nav-cn">设置</span><small class="nav-en">Settings</small></a>
+      <a href="#" class="nav-link active" data-view="pos"><span class="nav-cn">🍽️ 点单</span><small class="nav-en">POS</small></a>
+      <a href="#" class="nav-link" data-view="dashboard"><span class="nav-cn">🎮 游戏台</span><small class="nav-en">Gaming</small></a>
+      <a href="#" class="nav-link" data-view="orders"><span class="nav-cn">📋 订单</span><small class="nav-en">Orders</small></a>
+      <a href="#" class="nav-link" data-view="menu"><span class="nav-cn">📖 菜单</span><small class="nav-en">Menu</small></a>
+      <a href="#" class="nav-link" data-view="members"><span class="nav-cn">👥 会员</span><small class="nav-en">Members</small></a>
+      <a href="#" class="nav-link" data-view="history"><span class="nav-cn">📊 报表</span><small class="nav-en">Reports</small></a>
+      <a href="#" class="nav-link" data-view="settings"><span class="nav-cn">⚙️</span><small class="nav-en">Set</small></a>
     </div>
   </nav>
 
@@ -51,14 +55,17 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-  <script src="js/supabase-config.js?v=6"></script>
-  <script src="js/store.js?v=6"></script>
-  <script src="js/auth.js?v=6"></script>
-  <script src="js/dashboard.js?v=6"></script>
-  <script src="js/history.js?v=6"></script>
-  <script src="js/members.js?v=6"></script>
-  <script src="js/settings.js?v=6"></script>
-  <script src="js/app.js?v=6"></script>
+  <script src="js/supabase-config.js?v=7"></script>
+  <script src="js/store.js?v=7"></script>
+  <script src="js/auth.js?v=7"></script>
+  <script src="js/dashboard.js?v=7"></script>
+  <script src="js/history.js?v=7"></script>
+  <script src="js/members.js?v=7"></script>
+  <script src="js/settings.js?v=7"></script>
+  <script src="js/pos.js?v=7"></script>
+  <script src="js/menu.js?v=7"></script>
+  <script src="js/orders.js?v=7"></script>
+  <script src="js/app.js?v=7"></script>
 
   <script>
     if ('serviceWorker' in navigator) {

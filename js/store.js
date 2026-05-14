@@ -23,6 +23,10 @@ GC.Store = (function () {
     members: [],
     sessions: [],
     topUps: [],
+    menuCategories: [],
+    menuItems: [],
+    orders: [],
+    orderItems: [],
   };
 
   /* ========== Mappers ========== */
@@ -102,6 +106,68 @@ GC.Store = (function () {
     };
   }
 
+  function menuCategoryToApp(row) {
+    return {
+      id: row.id,
+      nameZh: row.name_zh,
+      nameEn: row.name_en,
+      emoji: row.emoji,
+      displayOrder: Number(row.display_order),
+      active: !!row.active,
+    };
+  }
+
+  function menuItemToApp(row) {
+    return {
+      id: row.id,
+      menuNo: Number(row.menu_no),
+      categoryId: row.category_id,
+      nameZh: row.name_zh,
+      nameEn: row.name_en || '',
+      description: row.description || '',
+      price: Number(row.price),
+      emoji: row.emoji || '🍴',
+      photoUrl: row.photo_url || null,
+      isFeatured: !!row.is_featured,
+      active: !!row.active,
+      displayOrder: Number(row.display_order),
+    };
+  }
+
+  function orderToApp(row) {
+    return {
+      id: row.id,
+      orderNo: row.order_no,
+      memberId: row.member_id,
+      guestName: row.guest_name,
+      subtotal: Number(row.subtotal),
+      discount: Number(row.discount),
+      total: Number(row.total),
+      paymentMethod: row.payment_method,
+      status: row.status,
+      note: row.note,
+      cashier: row.cashier,
+      createdAt: new Date(row.created_at).getTime(),
+      completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
+    };
+  }
+
+  function orderItemToApp(row) {
+    return {
+      id: row.id,
+      orderId: row.order_id,
+      menuItemId: row.menu_item_id,
+      menuNo: row.menu_no ? Number(row.menu_no) : null,
+      nameZh: row.name_zh,
+      nameEn: row.name_en || '',
+      emoji: row.emoji || '🍴',
+      unitPrice: Number(row.unit_price),
+      quantity: Number(row.quantity),
+      subtotal: Number(row.subtotal),
+      note: row.note,
+    };
+  }
+
   /* ========== Bind code helpers ========== */
 
   function generateBindCode() {
@@ -115,12 +181,19 @@ GC.Store = (function () {
 
   async function init() {
     sb = GC.supabase;
-    const [settingsRes, stationsRes, membersRes, sessionsRes, topUpsRes] = await Promise.all([
+    const [
+      settingsRes, stationsRes, membersRes, sessionsRes, topUpsRes,
+      categoriesRes, menuItemsRes, ordersRes, orderItemsRes,
+    ] = await Promise.all([
       sb.from('settings').select('*').single(),
       sb.from('stations').select('*').order('id'),
       sb.from('members').select('*').order('created_at'),
       sb.from('sessions').select('*').order('created_at', { ascending: false }),
       sb.from('top_ups').select('*').order('created_at', { ascending: false }),
+      sb.from('menu_categories').select('*').order('display_order'),
+      sb.from('menu_items').select('*').order('display_order'),
+      sb.from('orders').select('*').order('created_at', { ascending: false }).limit(500),
+      sb.from('order_items').select('*').limit(2000),
     ]);
 
     _cache.settings = settingsToApp(settingsRes.data);
@@ -128,6 +201,10 @@ GC.Store = (function () {
     _cache.members = (membersRes.data || []).map(memberToApp);
     _cache.sessions = (sessionsRes.data || []).map(sessionToApp);
     _cache.topUps = (topUpsRes.data || []).map(topUpToApp);
+    _cache.menuCategories = (categoriesRes.data || []).map(menuCategoryToApp);
+    _cache.menuItems = (menuItemsRes.data || []).map(menuItemToApp);
+    _cache.orders = (ordersRes.data || []).map(orderToApp);
+    _cache.orderItems = (orderItemsRes.data || []).map(orderItemToApp);
 
     subscribeRealtime();
   }
@@ -532,6 +609,176 @@ GC.Store = (function () {
     await init();
   }
 
+  /* ========== Menu ========== */
+
+  function getMenuCategories() {
+    return _cache.menuCategories.filter(c => c.active);
+  }
+  function getMenuCategory(id) { return _cache.menuCategories.find(c => c.id === id); }
+  function getMenuItems(opts = {}) {
+    let items = _cache.menuItems.filter(i => opts.includeInactive ? true : i.active);
+    if (opts.categoryId != null) items = items.filter(i => i.categoryId === opts.categoryId);
+    if (opts.featured) items = items.filter(i => i.isFeatured);
+    return items;
+  }
+  function getMenuItem(id) { return _cache.menuItems.find(i => i.id === id); }
+  function getMenuItemByNo(no) { return _cache.menuItems.find(i => i.menuNo === Number(no)); }
+
+  async function addMenuItem(data) {
+    const row = {
+      menu_no: data.menuNo,
+      category_id: data.categoryId,
+      name_zh: data.nameZh,
+      name_en: data.nameEn || null,
+      description: data.description || null,
+      price: data.price,
+      emoji: data.emoji || '🍴',
+      photo_url: data.photoUrl || null,
+      is_featured: !!data.isFeatured,
+      active: data.active !== false,
+      display_order: data.displayOrder || 0,
+    };
+    const { data: inserted, error } = await sb.from('menu_items').insert(row).select().single();
+    if (error) throw error;
+    const item = menuItemToApp(inserted);
+    _cache.menuItems.push(item);
+    return item;
+  }
+
+  async function updateMenuItem(id, patch) {
+    const dbPatch = {};
+    if ('menuNo' in patch) dbPatch.menu_no = patch.menuNo;
+    if ('categoryId' in patch) dbPatch.category_id = patch.categoryId;
+    if ('nameZh' in patch) dbPatch.name_zh = patch.nameZh;
+    if ('nameEn' in patch) dbPatch.name_en = patch.nameEn;
+    if ('description' in patch) dbPatch.description = patch.description;
+    if ('price' in patch) dbPatch.price = patch.price;
+    if ('emoji' in patch) dbPatch.emoji = patch.emoji;
+    if ('photoUrl' in patch) dbPatch.photo_url = patch.photoUrl;
+    if ('isFeatured' in patch) dbPatch.is_featured = patch.isFeatured;
+    if ('active' in patch) dbPatch.active = patch.active;
+    if ('displayOrder' in patch) dbPatch.display_order = patch.displayOrder;
+    dbPatch.updated_at = new Date().toISOString();
+
+    const { data, error } = await sb.from('menu_items').update(dbPatch).eq('id', id).select().single();
+    if (error) throw error;
+    const updated = menuItemToApp(data);
+    const idx = _cache.menuItems.findIndex(i => i.id === id);
+    if (idx >= 0) _cache.menuItems[idx] = updated;
+    return updated;
+  }
+
+  async function deleteMenuItem(id) {
+    await sb.from('menu_items').delete().eq('id', id);
+    _cache.menuItems = _cache.menuItems.filter(i => i.id !== id);
+  }
+
+  /* ========== Orders ========== */
+
+  function getOrders() { return _cache.orders; }
+  function getOrder(id) { return _cache.orders.find(o => o.id === id); }
+  function getOrderItemsForOrder(orderId) {
+    return _cache.orderItems.filter(oi => oi.orderId === orderId);
+  }
+
+  /**
+   * Create a new order with items, optionally pay immediately.
+   * cart: [{ menuItemId, quantity, note }]
+   * payment: { method: 'cash'|'paynow'|'member_balance'|'card', memberId? }
+   * Returns the completed order.
+   */
+  async function createOrder({ memberId, guestName, cart, payment, note, cashier }) {
+    if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
+
+    // Snapshot items
+    const items = cart.map(c => {
+      const item = getMenuItem(c.menuItemId);
+      if (!item) throw new Error(`商品不存在 Item not found: ${c.menuItemId}`);
+      const qty = c.quantity || 1;
+      return {
+        menu_item_id: item.id,
+        menu_no: item.menuNo,
+        name_zh: item.nameZh,
+        name_en: item.nameEn,
+        emoji: item.emoji,
+        unit_price: item.price,
+        quantity: qty,
+        subtotal: round2(item.price * qty),
+        note: c.note || null,
+      };
+    });
+
+    const subtotal = round2(items.reduce((s, i) => s + i.subtotal, 0));
+    const discount = 0; // no member discount on food in Phase 1
+    const total = round2(subtotal - discount);
+
+    // If member balance payment, check sufficient balance
+    if (payment.method === 'member_balance') {
+      if (!memberId) throw new Error('需要选择会员 Member required');
+      const m = getMember(memberId);
+      if (!m) throw new Error('会员不存在 Member not found');
+      if (m.balance < total) {
+        throw new Error(`余额不足: 需要 ${total}, 余额 ${m.balance.toFixed(2)}`);
+      }
+    }
+
+    // Insert order
+    const orderRow = {
+      member_id: memberId || null,
+      guest_name: guestName || null,
+      subtotal, discount, total,
+      payment_method: payment.method,
+      status: 'completed',
+      note: note || null,
+      cashier: cashier || null,
+      completed_at: new Date().toISOString(),
+    };
+    const { data: orderData, error: orderErr } = await sb.from('orders').insert(orderRow).select().single();
+    if (orderErr) throw orderErr;
+
+    // Insert items
+    const itemRows = items.map(i => ({ ...i, order_id: orderData.id }));
+    const { data: itemsData, error: itemsErr } = await sb.from('order_items').insert(itemRows).select();
+    if (itemsErr) throw itemsErr;
+
+    // Cache
+    const order = orderToApp(orderData);
+    _cache.orders.unshift(order);
+    const orderItems = (itemsData || []).map(orderItemToApp);
+    _cache.orderItems.push(...orderItems);
+
+    // Deduct from member balance if applicable
+    if (payment.method === 'member_balance' && memberId) {
+      const m = getMember(memberId);
+      await updateMember(memberId, {
+        balance: Math.max(0, m.balance - total),
+        totalSpent: m.totalSpent + total,
+      });
+    }
+
+    return { order, items: orderItems };
+  }
+
+  async function voidOrder(orderId) {
+    const order = getOrder(orderId);
+    if (!order) throw new Error('Order not found');
+
+    // Refund to member balance if it was deducted
+    if (order.paymentMethod === 'member_balance' && order.memberId) {
+      const m = getMember(order.memberId);
+      if (m) {
+        await updateMember(order.memberId, {
+          balance: m.balance + order.total,
+          totalSpent: Math.max(0, m.totalSpent - order.total),
+        });
+      }
+    }
+
+    await sb.from('orders').update({ status: 'voided' }).eq('id', orderId);
+    const idx = _cache.orders.findIndex(o => o.id === orderId);
+    if (idx >= 0) _cache.orders[idx].status = 'voided';
+  }
+
   /* ========== Export / Import ========== */
 
   function exportData() {
@@ -584,6 +831,13 @@ GC.Store = (function () {
     getMembers, getMember, getMemberByBindCode,
     getSessions, getActiveSessions, getActiveSessionsForStation,
     getTopUps, getTopUpsForMember,
+    // Menu
+    getMenuCategories, getMenuCategory,
+    getMenuItems, getMenuItem, getMenuItemByNo,
+    addMenuItem, updateMenuItem, deleteMenuItem,
+    // Orders
+    getOrders, getOrder, getOrderItemsForOrder,
+    createOrder, voidOrder,
     // Billing
     getRateFor, resolveRateTier,
     computeWalkInBill, computeMemberBill,

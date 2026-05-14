@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sample A — Classic Grid POS</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Inter', sans-serif;
+    background: #06090f;
+    color: #f1f5f9;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .pos-layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    height: 100vh;
+  }
+
+  /* ===== Left: Products ===== */
+  .products-panel {
+    display: flex; flex-direction: column;
+    border-right: 1px solid #1e293b;
+  }
+  .top-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px;
+    border-bottom: 1px solid #1e293b;
+    background: rgba(12,16,23,0.85);
+  }
+  .top-bar-title {
+    font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em;
+  }
+  .top-bar-title .accent { color: #06b6d4; }
+  .top-bar-meta { font-size: 0.85rem; color: #94a3b8; }
+
+  .category-tabs {
+    display: flex; gap: 4px; padding: 14px 24px;
+    border-bottom: 1px solid #1e293b;
+    overflow-x: auto;
+  }
+  .cat-tab {
+    padding: 10px 20px; border-radius: 10px;
+    font-size: 0.88rem; font-weight: 500;
+    color: #94a3b8; background: #1e293b;
+    border: 1px solid transparent;
+    cursor: pointer; white-space: nowrap;
+    transition: all 0.15s;
+  }
+  .cat-tab:hover { color: #f1f5f9; }
+  .cat-tab.active {
+    background: rgba(6,182,212,0.12);
+    color: #06b6d4;
+    border-color: rgba(6,182,212,0.3);
+  }
+
+  .product-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    padding: 20px 24px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .product-tile {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 14px;
+    padding: 18px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+    position: relative;
+  }
+  .product-tile:hover {
+    transform: translateY(-3px);
+    border-color: #06b6d4;
+    box-shadow: 0 8px 24px rgba(6,182,212,0.15);
+  }
+  .product-tile.featured {
+    border-color: rgba(245,158,11,0.4);
+    background: linear-gradient(135deg, rgba(245,158,11,0.06), #111827);
+  }
+  .product-emoji { font-size: 2.4rem; margin-bottom: 8px; line-height: 1; }
+  .product-name {
+    font-size: 0.88rem; font-weight: 600; margin-bottom: 4px;
+    color: #f1f5f9;
+  }
+  .product-name-en {
+    font-size: 0.7rem; color: #64748b; margin-bottom: 8px;
+  }
+  .product-price {
+    font-family: 'SF Mono', 'Menlo', monospace;
+    font-size: 1.1rem; font-weight: 700;
+    color: #06b6d4;
+  }
+  .featured-tag {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 0.6rem; font-weight: 700;
+    background: #f59e0b; color: #000;
+    padding: 2px 6px; border-radius: 4px;
+    letter-spacing: 0.05em;
+  }
+
+  /* ===== Right: Cart ===== */
+  .cart-panel {
+    display: flex; flex-direction: column;
+    background: #0c1017;
+  }
+  .cart-header {
+    padding: 18px 22px;
+    border-bottom: 1px solid #1e293b;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .cart-title { font-size: 0.95rem; font-weight: 700; }
+  .order-no { font-size: 0.78rem; color: #64748b; font-family: 'SF Mono', monospace; }
+
+  .cart-customer {
+    padding: 14px 22px;
+    background: linear-gradient(135deg, rgba(139,92,246,0.08), rgba(6,182,212,0.06));
+    border-bottom: 1px solid #1e293b;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .cust-avatar {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: linear-gradient(135deg, #8b5cf6, #06b6d4);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: #fff;
+  }
+  .cust-info { flex: 1; }
+  .cust-name { font-size: 0.88rem; font-weight: 600; }
+  .cust-tier { font-size: 0.7rem; color: #c4b5fd; }
+  .cust-balance {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.95rem; font-weight: 700;
+    color: #10b981;
+  }
+
+  .cart-items {
+    flex: 1; overflow-y: auto;
+    padding: 12px 22px;
+  }
+  .cart-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #1e293b;
+  }
+  .cart-item:last-child { border-bottom: none; }
+  .cart-item-info { flex: 1; min-width: 0; }
+  .cart-item-name { font-size: 0.85rem; font-weight: 500; }
+  .cart-item-mod { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+  .cart-item-qty {
+    display: flex; align-items: center; gap: 6px;
+    background: #1e293b; border-radius: 8px;
+    padding: 4px;
+  }
+  .qty-btn {
+    width: 24px; height: 24px; border-radius: 6px;
+    background: #06b6d4; color: #fff;
+    border: none; cursor: pointer; font-weight: 700;
+  }
+  .qty-num { min-width: 20px; text-align: center; font-weight: 600; font-size: 0.85rem; }
+  .cart-item-price {
+    font-family: 'SF Mono', monospace;
+    font-weight: 700; min-width: 56px; text-align: right;
+    color: #06b6d4;
+  }
+
+  .cart-totals {
+    padding: 16px 22px;
+    border-top: 1px solid #1e293b;
+    background: #06090f;
+  }
+  .total-row {
+    display: flex; justify-content: space-between;
+    font-size: 0.85rem; margin-bottom: 8px;
+    color: #94a3b8;
+  }
+  .total-row.grand {
+    font-size: 1.15rem; font-weight: 700; color: #f1f5f9;
+    margin-top: 8px; padding-top: 12px; border-top: 1px solid #1e293b;
+  }
+  .total-row.grand .amount { color: #06b6d4; font-family: 'SF Mono', monospace; }
+
+  .pay-button {
+    display: block; width: 100%;
+    padding: 16px;
+    margin-top: 14px;
+    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    color: #fff;
+    border: none; border-radius: 12px;
+    font-size: 1rem; font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 16px rgba(6,182,212,0.3);
+  }
+  .pay-button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(6,182,212,0.4); }
+
+  .pay-options {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    margin-top: 8px;
+  }
+  .pay-opt-btn {
+    padding: 8px;
+    background: #1e293b;
+    color: #94a3b8;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    font-size: 0.78rem; font-weight: 500;
+    cursor: pointer;
+  }
+  .pay-opt-btn:hover { background: #334155; color: #f1f5f9; }
+
+  /* Sample label */
+  .sample-label {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    background: rgba(6,182,212,0.15); color: #06b6d4;
+    padding: 6px 14px; border-radius: 20px;
+    font-size: 0.75rem; font-weight: 700;
+    border: 1px solid rgba(6,182,212,0.3);
+    z-index: 100;
+    letter-spacing: 0.08em;
+  }
+</style>
+</head>
+<body>
+
+<div class="sample-label">SAMPLE A · CLASSIC GRID POS</div>
+
+<div class="pos-layout">
+  <!-- LEFT: Products -->
+  <div class="products-panel">
+    <div class="top-bar">
+      <div class="top-bar-title">YXD <span class="accent">点单</span> / Order</div>
+      <div class="top-bar-meta">2026/05/14 · 14:23 · 收银员: Ernest</div>
+    </div>
+
+    <div class="category-tabs">
+      <button class="cat-tab active">🍧 糖水类 / Soup</button>
+      <button class="cat-tab">🍨 冰品 / Ice</button>
+      <button class="cat-tab">🥟 包点 / Snacks</button>
+      <button class="cat-tab">🥤 饮料 / Drinks</button>
+      <button class="cat-tab">🎁 套餐 / Combo</button>
+    </div>
+
+    <div class="product-grid">
+      <div class="product-tile featured">
+        <span class="featured-tag">HOT</span>
+        <div class="product-emoji">🍧</div>
+        <div class="product-name">芋圆冰</div>
+        <div class="product-name-en">Taro Ball Ice</div>
+        <div class="product-price">$8.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🥣</div>
+        <div class="product-name">红豆汤</div>
+        <div class="product-name-en">Red Bean Soup</div>
+        <div class="product-price">$5.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍮</div>
+        <div class="product-name">仙草冻</div>
+        <div class="product-name-en">Grass Jelly</div>
+        <div class="product-price">$6.00</div>
+      </div>
+      <div class="product-tile featured">
+        <span class="featured-tag">HOT</span>
+        <div class="product-emoji">🥭</div>
+        <div class="product-name">杨枝甘露</div>
+        <div class="product-name-en">Mango Pomelo</div>
+        <div class="product-price">$7.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🥥</div>
+        <div class="product-name">椰汁西米</div>
+        <div class="product-name-en">Coconut Sago</div>
+        <div class="product-price">$7.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍐</div>
+        <div class="product-name">海底椰雪梨</div>
+        <div class="product-name-en">Pear Coconut</div>
+        <div class="product-price">$6.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍚</div>
+        <div class="product-name">紫米露</div>
+        <div class="product-name-en">Purple Rice</div>
+        <div class="product-price">$7.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍡</div>
+        <div class="product-name">汤圆</div>
+        <div class="product-name-en">Tang Yuan</div>
+        <div class="product-price">$5.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🥥</div>
+        <div class="product-name">椰奶冻</div>
+        <div class="product-name-en">Coconut Pudding</div>
+        <div class="product-price">$6.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍵</div>
+        <div class="product-name">绿豆沙</div>
+        <div class="product-name-en">Green Bean</div>
+        <div class="product-price">$5.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍯</div>
+        <div class="product-name">蜂蜜柚子</div>
+        <div class="product-name-en">Honey Pomelo</div>
+        <div class="product-price">$6.00</div>
+      </div>
+      <div class="product-tile">
+        <div class="product-emoji">🍑</div>
+        <div class="product-name">桃胶炖燕</div>
+        <div class="product-name-en">Peach Resin</div>
+        <div class="product-price">$12.00</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Cart -->
+  <div class="cart-panel">
+    <div class="cart-header">
+      <div class="cart-title">订单 / Cart</div>
+      <div class="order-no">#0451</div>
+    </div>
+
+    <div class="cart-customer">
+      <div class="cust-avatar">张</div>
+      <div class="cust-info">
+        <div class="cust-name">张先生 💎 Platinum</div>
+        <div class="cust-tier">余额 / Balance</div>
+      </div>
+      <div class="cust-balance">$293.75</div>
+    </div>
+
+    <div class="cart-items">
+      <div class="cart-item">
+        <div class="cart-item-info">
+          <div class="cart-item-name">芋圆冰</div>
+          <div class="cart-item-mod">少糖, 加芋圆 +$1</div>
+        </div>
+        <div class="cart-item-qty">
+          <button class="qty-btn">−</button>
+          <span class="qty-num">1</span>
+          <button class="qty-btn">+</button>
+        </div>
+        <div class="cart-item-price">$9.00</div>
+      </div>
+      <div class="cart-item">
+        <div class="cart-item-info">
+          <div class="cart-item-name">杨枝甘露</div>
+        </div>
+        <div class="cart-item-qty">
+          <button class="qty-btn">−</button>
+          <span class="qty-num">2</span>
+          <button class="qty-btn">+</button>
+        </div>
+        <div class="cart-item-price">$14.00</div>
+      </div>
+      <div class="cart-item">
+        <div class="cart-item-info">
+          <div class="cart-item-name">PS5 1号台</div>
+          <div class="cart-item-mod">🎮 游戏 · 1.5h prorated</div>
+        </div>
+        <div class="cart-item-qty" style="opacity:0.6">
+          <span class="qty-num">1.5h</span>
+        </div>
+        <div class="cart-item-price">$12.00</div>
+      </div>
+    </div>
+
+    <div class="cart-totals">
+      <div class="total-row">
+        <span>小计 / Subtotal</span>
+        <span>$35.00</span>
+      </div>
+      <div class="total-row">
+        <span>GST 9%</span>
+        <span>$3.15</span>
+      </div>
+      <div class="total-row grand">
+        <span>应收 / Total</span>
+        <span class="amount">$38.15</span>
+      </div>
+
+      <button class="pay-button">💎 扣会员余额 / Member Pay</button>
+
+      <div class="pay-options">
+        <button class="pay-opt-btn">💵 现金</button>
+        <button class="pay-opt-btn">💳 PayNow</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

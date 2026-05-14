@@ -1049,39 +1049,32 @@ GC.POS = (function () {
         });
       });
 
+      // Smart default — pre-fill with `remaining` once at least one payment
+      // has been added (cashier almost always wants the gap for second+
+      // tender). First tender stays empty so cashier consciously enters
+      // the partial amount they want (avoids accidental overpay).
+      // Per user request 2026-05-14: "第二个付款方式打开时默认剩余金额".
+      const smartDefault = payments.length > 0 ? remaining : undefined;
+
       // Add payment buttons — all use the numpad modal (UX P0-1/2/3)
       modal.querySelectorAll('[data-add]').forEach(b => {
         b.addEventListener('click', async () => {
           const method = b.dataset.add;
           if (method === 'cash') {
-            // For cash, ask amount via numpad. If the entered amount is
-            // exactly the remaining, no change needed. If less, partial cash
-            // (no change). If equal-to-remaining and customer hands over
-            // more, go through showCashModal for the change calc.
+            // Fix 2026-05-14: do NOT auto-route to showCashModal when amount
+            // equals remaining — that forced cashier into a ≥amount input
+            // and locked them out of revising to a smaller value (user-
+            // reported bug: "点选现金金额不够无法确认"). Cash in split now
+            // always pushes as a plain amount. If overpay+change calc is
+            // needed, cashier should use the regular (non-split) cash flow.
             const amount = await showAmountNumpadModal({
               title: '💵 现金金额 / Cash Amount',
               maxAmount: remaining,
               sym,
               hint: `差 ${sym}${remaining.toFixed(2)} (可输入更少做部分现金)`,
+              defaultValue: smartDefault,
             });
-            if (amount != null) {
-              // If this cash brings us to total exactly AND it equals the
-              // remaining, optionally show change modal in case customer
-              // tendered more. Skip the extra modal for partials.
-              if (Math.abs(amount - remaining) < 0.01) {
-                // Last tender — offer change calc
-                const cashResult = await showCashModal(amount);
-                if (cashResult) {
-                  payments.push({
-                    method: 'cash', amount,
-                    tendered: cashResult.received,
-                    changeGiven: cashResult.change,
-                  });
-                }
-              } else {
-                payments.push({ method: 'cash', amount });
-              }
-            }
+            if (amount != null) payments.push({ method: 'cash', amount });
             renderModal();
           } else if (method === 'paynow') {
             const amount = await showAmountNumpadModal({
@@ -1089,6 +1082,7 @@ GC.POS = (function () {
               maxAmount: remaining,
               sym,
               hint: '客户已扫码付款',
+              defaultValue: smartDefault,
             });
             if (amount != null) payments.push({ method: 'paynow', amount });
             renderModal();
@@ -1099,6 +1093,7 @@ GC.POS = (function () {
               maxAmount: max,
               sym,
               hint: `可用余额 ${sym}${memberAvailable.toFixed(2)}`,
+              defaultValue: smartDefault != null ? Math.min(smartDefault, max) : undefined,
             });
             if (amount != null) payments.push({ method: 'member_balance', amount });
             renderModal();
@@ -1155,12 +1150,14 @@ GC.POS = (function () {
    * (UX P0-1/2/3 audit 2026-05-14: GC.prompt had no numpad and auto-filled
    *  the full max, causing one-tap-overpay bugs on iPad.)
    *
-   * opts: { title, maxAmount, sym, hint?, allowExceed? }
+   * opts: { title, maxAmount, sym, hint?, allowExceed?, defaultValue? }
+   *   defaultValue: optional number to pre-fill the input (e.g., remaining
+   *   amount on second+ split tender so cashier doesn't retype it).
    * Returns: Promise<number|null>
    */
   function showAmountNumpadModal(opts) {
     return new Promise(resolve => {
-      const { title, maxAmount, sym, hint, allowExceed } = opts;
+      const { title, maxAmount, sym, hint, allowExceed, defaultValue } = opts;
       const modal = document.getElementById('modal');
       const presets = (() => {
         // Smart quick presets: full, half, common round values <= max
@@ -1172,6 +1169,7 @@ GC.POS = (function () {
         [2, 5, 10, 20, 50].forEach(v => { if (v <= maxAmount) set.add(v); });
         return [...set].sort((a, b) => a - b);
       })();
+      const initial = defaultValue != null ? Number(defaultValue).toFixed(2) : '';
 
       modal.innerHTML = `
         <div class="modal-overlay">
@@ -1192,7 +1190,7 @@ GC.POS = (function () {
                 <div class="rate-input-group" style="max-width:240px">
                   <span class="rate-prefix">${sym}</span>
                   <input type="text" inputmode="none" id="amt-input" class="form-input settings-input"
-                    placeholder="0.00"
+                    placeholder="0.00" value="${initial}"
                     style="font-size:1.5rem;font-weight:700;width:160px;text-align:right" readonly>
                 </div>
                 <div class="cash-presets">
@@ -1236,6 +1234,8 @@ GC.POS = (function () {
         input.style.color = '';
         okBtn.disabled = false;
       };
+      // Enable OK if pre-filled and valid
+      if (initial) updateOk();
 
       modal.querySelectorAll('.cash-preset-btn').forEach(b => {
         b.addEventListener('click', () => { input.value = b.dataset.amount; updateOk(); });

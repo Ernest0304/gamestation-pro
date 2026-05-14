@@ -219,6 +219,9 @@ window.GC = window.GC || {};
         await bootApp();
       } else if (event === 'SIGNED_OUT') {
         GC._authAttemptStart = null;
+        // Tear down realtime channels + cached data so the next login starts
+        // clean (prevents "cannot add postgres_changes after subscribe" errors)
+        if (GC.Store && GC.Store.resetForLogout) GC.Store.resetForLogout();
         showLogin();
       } else if (event === 'INITIAL_SESSION') {
         // Handled below by getSession — ignore here to avoid double-boot

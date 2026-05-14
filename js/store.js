@@ -223,16 +223,52 @@ GC.Store = (function () {
     // returns the same in-flight promise instead of starting a parallel run.
     if (_initPromise) return _initPromise;
     _initPromise = _runInit().catch((err) => {
-      // On hard failure, allow a fresh retry next time.
+      // On hard failure, allow a fresh retry next time + clean realtime state.
       _initPromise = null;
+      _subscribed = false;
+      try {
+        if (sb && sb.removeAllChannels) sb.removeAllChannels();
+      } catch (_) {}
       throw err;
     });
     return _initPromise;
   }
 
+  // Called by app.js on SIGNED_OUT so a re-login starts fresh.
+  function resetForLogout() {
+    _initPromise = null;
+    _subscribed = false;
+    try {
+      if (sb && sb.removeAllChannels) sb.removeAllChannels();
+    } catch (_) {}
+    _cache.settings = null;
+    _cache.stations = [];
+    _cache.members = [];
+    _cache.sessions = [];
+    _cache.topUps = [];
+    _cache.menuCategories = [];
+    _cache.menuItems = [];
+    _cache.orders = [];
+    _cache.orderItems = [];
+  }
+
   /* ========== Realtime ========== */
 
   function subscribeRealtime() {
+    // Defensive cleanup: remove any pre-existing channel with the same topic.
+    // Symptom this fixes: Supabase SDK throws
+    //   "cannot add `postgres_changes` callbacks for realtime:gc-sync after `subscribe()`"
+    // when a previously-subscribed channel survives in client state (eg.
+    // a half-completed prior init in the same page session).
+    try {
+      const existing = (sb.getChannels && sb.getChannels()) || [];
+      existing.forEach(c => {
+        if (c.topic === 'realtime:gc-sync' || c.topic === 'gc-sync') {
+          try { sb.removeChannel(c); } catch (_) {}
+        }
+      });
+    } catch (e) { console.warn('Channel cleanup skipped:', e); }
+
     sb.channel('gc-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, (payload) => {
         if (payload.eventType === 'INSERT' && payload.new) {
@@ -1071,7 +1107,7 @@ GC.Store = (function () {
   }
 
   return {
-    init,
+    init, resetForLogout,
     // Time (clock-synced with server)
     now, syncClock,
     // Reads

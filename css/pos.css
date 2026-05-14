@@ -808,6 +808,21 @@ body.pos-mode .split-row.remaining.zero { color: #15803d; }
 }
 body.pos-mode .split-section-title { color: #78350f; }
 
+.split-list-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 14px 0 4px;
+}
+.split-list-header .split-section-title { margin: 0; }
+.split-clear-all {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--red); font-size: 0.78rem; font-weight: 600;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  min-height: 32px;
+}
+.split-clear-all:hover { background: rgba(220, 38, 38, 0.08); border-color: var(--red); }
+body.pos-mode .split-clear-all { color: #b91c1c; border-color: #f0d9b8; }
+body.pos-mode .split-clear-all:hover { background: #fef2f2; border-color: #fca5a5; }
+
 .split-payments-list {
   display: flex; flex-direction: column; gap: 6px;
 }

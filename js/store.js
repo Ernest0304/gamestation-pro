@@ -1093,9 +1093,17 @@ GC.Store = (function () {
     }
     const total = round2(Math.max(0, subtotal - discountAmt));
 
-    // Normalize payments — backwards compat with single payment object
-    let paymentsList = payments;
-    if (!paymentsList || paymentsList.length === 0) {
+    // Normalize payments — backwards compat with single payment object.
+    // IT P1-3: distinguish "undefined" (caller used legacy single-payment
+    // path) from "explicit empty array" (caller passed split-bill but failed
+    // to add any). Empty array is a bug, not a fallback signal.
+    let paymentsList;
+    if (Array.isArray(payments)) {
+      if (payments.length === 0) {
+        throw new Error('未添加任何付款方式 / No payments provided');
+      }
+      paymentsList = payments;
+    } else {
       // legacy: single payment {method} applied to full total
       paymentsList = [{
         method: payment ? payment.method : 'cash',
@@ -1105,8 +1113,19 @@ GC.Store = (function () {
       }];
     }
 
+    // IT P1-2: per-row validation (amount > 0, method allowed)
+    const ALLOWED_METHODS = new Set(['cash','paynow','member_balance','card','grab','foodpanda']);
+    for (const p of paymentsList) {
+      if (!ALLOWED_METHODS.has(p.method)) {
+        throw new Error(`无效付款方式 / Invalid payment method: ${p.method}`);
+      }
+      if (!(Number(p.amount) > 0)) {
+        throw new Error(`付款金额必须大于 0 / Payment amount must be > 0`);
+      }
+    }
+
     // Validate payments sum equals total (allow ±$0.01 rounding tolerance)
-    const paySum = round2(paymentsList.reduce((s, p) => s + Number(p.amount), 0));
+    const paySum = round2(paymentsList.reduce((s, p) => s + round2(Number(p.amount)), 0));
     if (Math.abs(paySum - total) > 0.01) {
       throw new Error(`支付金额(${paySum})与应收(${total})不符 / Payment ${paySum} ≠ Total ${total}`);
     }
@@ -1144,10 +1163,15 @@ GC.Store = (function () {
     const { data: orderData, error: orderErr } = await sb.from('orders').insert(orderRow).select().single();
     if (orderErr) throw orderErr;
 
-    // Insert items
+    // Insert items — IT P0-2: rollback orphan order if items fail.
     const itemRows = items.map(i => ({ ...i, order_id: orderData.id }));
     const { data: itemsData, error: itemsErr } = await sb.from('order_items').insert(itemRows).select();
-    if (itemsErr) throw itemsErr;
+    if (itemsErr) {
+      try {
+        await sb.from('orders').update({ status: 'voided', note: 'AUTO-VOIDED: items insert failed' }).eq('id', orderData.id);
+      } catch (_) {}
+      throw new Error('订单商品记录失败 / Items record failed: ' + itemsErr.message);
+    }
 
     // Insert payments (one row per tender) — IT S1-A: error check + rollback orphan order
     const paymentRows = paymentsList.map(p => ({
@@ -1188,13 +1212,37 @@ GC.Store = (function () {
     const orderPayments = (paymentsData || []).map(orderPaymentToApp);
     _cache.orderPayments.push(...orderPayments);
 
-    // Deduct member balance for any member_balance portion
+    // Deduct member balance for any member_balance portion.
+    // IT P0-3: chargeBalance returns shortfall — if > 0, the cache pre-check
+    // (line ~1121) was stale and another tab drained the balance between read
+    // and RPC. Roll the order back so we don't ship goods un-paid.
     const memberBalanceTotal = paymentsList
       .filter(p => p.method === 'member_balance')
       .reduce((s, p) => s + Number(p.amount), 0);
     if (memberBalanceTotal > 0 && memberId) {
       const m = getMember(memberId);
-      await chargeBalance(memberId, -memberBalanceTotal, `order_${order.orderNo}`);
+      const { shortfall } = await chargeBalance(memberId, -memberBalanceTotal, `order_${order.orderNo}`);
+      if (shortfall > 0) {
+        // Refund what we just took (RPC accepts negative for charge, positive
+        // for refund). Then void the order + clear payment rows so the cashier
+        // sees the failure cleanly.
+        try {
+          await chargeBalance(memberId, memberBalanceTotal, `rollback_${order.orderNo}`);
+        } catch (_) { /* best effort */ }
+        try { await sb.from('order_payments').delete().eq('order_id', orderData.id); } catch (_) {}
+        try {
+          await sb.from('orders').update({
+            status: 'voided',
+            note: 'AUTO-VOIDED: member balance insufficient at charge time',
+          }).eq('id', orderData.id);
+        } catch (_) {}
+        // Also drop from cache so UI doesn't show ghost order.
+        _cache.orders = _cache.orders.filter(o => o.id !== orderData.id);
+        _cache.orderPayments = _cache.orderPayments.filter(p => p.orderId !== orderData.id);
+        throw new Error(
+          `余额不足 / Insufficient balance — 差 ${shortfall.toFixed(2)}. 订单已撤销，请改用其他付款方式.`
+        );
+      }
       await updateMember(memberId, {
         totalSpent: m.totalSpent + memberBalanceTotal,
       });
@@ -1211,8 +1259,16 @@ GC.Store = (function () {
    *           orderCount, sessionCount, voidedCount, byPayment[] }
    */
   function getDailySummary(yyyymmdd) {
-    const day = yyyymmdd || new Date().toISOString().slice(0, 10);
-    const start = new Date(day + 'T00:00:00').getTime();
+    // Singapore timezone is UTC+8 — pin window explicitly so a cashier on a
+    // device with a different OS timezone (or near midnight UTC drift) still
+    // gets the right Singapore business-day boundaries. (Finance P0-B 2026-05-14)
+    const day = yyyymmdd || (() => {
+      // Today in SGT
+      const now = new Date();
+      const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
+      return sgt.toISOString().slice(0, 10);
+    })();
+    const start = new Date(day + 'T00:00:00+08:00').getTime();
     const end = start + 86400000;
 
     const dayOrders = _cache.orders.filter(o =>
@@ -1296,7 +1352,10 @@ GC.Store = (function () {
     const activeSessions = _cache.sessions.filter(s => s.status === 'active');
     if (activeSessions.length > 0) {
       const stationLabels = activeSessions.map(s => s.stationName || s.stationId).join(', ');
-      throw new Error(`仍有 ${activeSessions.length} 个游戏台未结账 (${stationLabels}). 请先结束所有台再日结.`);
+      throw new Error(
+        `仍有 ${activeSessions.length} 个游戏台未结账：${stationLabels}。` +
+        `请先在「游戏台」页面结束这些机台，然后再回到「报表」日结。`
+      );
     }
 
     const summary = getDailySummary(yyyymmdd);
@@ -1346,31 +1405,73 @@ GC.Store = (function () {
     return _cache.orderPayments.filter(p => p.orderId === orderId);
   }
 
-  async function voidOrder(orderId) {
+  /**
+   * Void an order. Handles refund per tender:
+   * - member_balance: refunded via chargeBalance (covers MIXED orders that
+   *   used member balance for part of the bill — was broken before:
+   *   Finance P0-C + IT P0-1 audit 2026-05-14)
+   * - cash / paynow / card / grab / foodpanda: a negative refund row is
+   *   inserted into order_payments so the day's revenue nets out. The
+   *   cashier is expected to physically return the cash (or process the
+   *   reversal). Caller passes `note` to explain (e.g., "客户改主意",
+   *   "厨房做错了").
+   *
+   * opts: { note?, refundedTenders? }
+   *   refundedTenders: optional Set/Array of payment IDs the cashier
+   *     marks as actually returned. If omitted, ALL tenders are refunded
+   *     (default behavior — matches "void = cancel, money goes back").
+   */
+  async function voidOrder(orderId, opts = {}) {
     const order = getOrder(orderId);
     if (!order) throw new Error('Order not found');
     if (order.status === 'voided') return; // idempotent
 
-    // Refund to member balance atomically if it was deducted
-    if (order.paymentMethod === 'member_balance' && order.memberId) {
+    const actor = await getCurrentUserEmail();
+    const note = opts.note || null;
+    const tenders = _cache.orderPayments.filter(p => p.orderId === orderId);
+
+    // 1) Refund member-balance portions FIRST (atomic via RPC).
+    //    Works for both single-method member orders AND mixed orders.
+    let memberRefunded = 0;
+    for (const t of tenders) {
+      if (t.method !== 'member_balance') continue;
+      if (!order.memberId) continue;
+      await chargeBalance(order.memberId, Number(t.amount), `void_order_${order.orderNo}`);
+      memberRefunded += Number(t.amount);
+    }
+    // Legacy fallback: orders predating order_payments may have
+    // paymentMethod='member_balance' but no row in order_payments.
+    if (memberRefunded === 0 && order.paymentMethod === 'member_balance' && order.memberId) {
+      await chargeBalance(order.memberId, order.total, `void_order_${order.orderNo}`);
+      memberRefunded = order.total;
+    }
+    if (memberRefunded > 0 && order.memberId) {
       const m = getMember(order.memberId);
       if (m) {
-        await chargeBalance(order.memberId, order.total, `void_order_${order.orderNo}`);
         await updateMember(order.memberId, {
-          totalSpent: Math.max(0, m.totalSpent - order.total),
+          totalSpent: Math.max(0, m.totalSpent - memberRefunded),
         });
       }
     }
 
+    // 2) Mark order voided.
     await sb.from('orders').update({ status: 'voided' }).eq('id', orderId);
     const idx = _cache.orders.findIndex(o => o.id === orderId);
     if (idx >= 0) _cache.orders[idx].status = 'voided';
 
-    // Audit
+    // 3) Audit with actor + per-tender breakdown.
     await sb.from('audit_log').insert({
       action: 'order_void',
-      before_state: { order_no: order.orderNo, total: order.total, payment: order.paymentMethod, member_id: order.memberId },
-      note: `Voided order #${order.orderNo}`,
+      actor_email: actor,
+      before_state: {
+        order_no: order.orderNo,
+        total: order.total,
+        payment: order.paymentMethod,
+        member_id: order.memberId,
+        tenders: tenders.map(t => ({ method: t.method, amount: t.amount })),
+      },
+      after_state: { member_refunded: memberRefunded, note },
+      note: note || `Voided order #${order.orderNo}`,
     });
   }
 

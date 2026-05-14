@@ -799,15 +799,17 @@ GC.POS = (function () {
 
   /* ---- Split Bill modal ----
      Lets cashier build a list of payments (cash / paynow / member balance)
-     that sum to the order total. Each cash tender goes through the same
-     numpad UI as showCashModal so change calculation works.
+     that sum to the order total. All methods use showAmountNumpadModal
+     (numpad-based, default empty) so cashiers can do partial cash, partial
+     PayNow, etc. — fixes UX P0-1/2/3 from 2026-05-14 audit.
+     If the final cash tender brings the bill over total (customer overpays),
+     showCashModal is invoked for change calc on the LAST cash row.
   */
   async function showSplitBillModal() {
     if (cart.length === 0) return;
     const sym = GC.Store.getSettings().currencySymbol;
     const total = cartTotal();
-    const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
-    const payments = [];   // [{method, amount, tendered?, changeGiven?}]
+    let payments = [];   // [{method, amount, tendered?, changeGiven?}]
 
     const methodLabel = (m) => ({
       cash: '💵 现金 Cash',
@@ -819,8 +821,15 @@ GC.POS = (function () {
     const modal = document.getElementById('modal');
 
     const renderModal = () => {
-      const paidSoFar = payments.reduce((s, p) => s + p.amount, 0);
-      const remaining = Math.max(0, total - paidSoFar);
+      // Always re-read member (balance may have changed via realtime sync)
+      const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
+      // Available member balance = current balance minus already-pledged member rows
+      const memberPledged = payments.filter(p => p.method === 'member_balance')
+        .reduce((s, p) => s + p.amount, 0);
+      const memberAvailable = member ? Math.max(0, member.balance - memberPledged) : 0;
+
+      const paidSoFar = round2Local(payments.reduce((s, p) => s + p.amount, 0));
+      const remaining = Math.max(0, round2Local(total - paidSoFar));
       const canConfirm = Math.abs(remaining) < 0.01;
 
       modal.innerHTML = `
@@ -840,7 +849,10 @@ GC.POS = (function () {
                 </div>
               </div>
 
-              <h4 class="split-section-title">已添加的付款 / Payments Added</h4>
+              <div class="split-list-header">
+                <h4 class="split-section-title">已添加的付款 / Payments Added</h4>
+                ${payments.length > 0 ? '<button class="split-clear-all" id="split-clear">🗑 清空 / Clear All</button>' : ''}
+              </div>
               <div class="split-payments-list">
                 ${payments.length === 0 ? '<div class="split-empty">还没添加付款 / No payments yet</div>' : payments.map((p, i) => `
                   <div class="split-payment-row">
@@ -856,14 +868,14 @@ GC.POS = (function () {
                 <div class="split-add-buttons">
                   <button class="split-add-btn" data-add="cash">💵 现金 Cash</button>
                   <button class="split-add-btn" data-add="paynow">📱 PayNow</button>
-                  ${member && member.balance > 0 ? `<button class="split-add-btn" data-add="member_balance">💎 会员余额 (${sym}${member.balance.toFixed(2)})</button>` : ''}
+                  ${memberAvailable > 0 ? `<button class="split-add-btn" data-add="member_balance">💎 会员余额 (${sym}${memberAvailable.toFixed(2)})</button>` : ''}
                 </div>
               ` : ''}
             </div>
             <div class="modal-footer">
               <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
               <button class="btn btn-primary" id="m-confirm-split" ${!canConfirm ? 'disabled' : ''}>
-                ${canConfirm ? '✅ 确认结账 / Confirm Split' : '继续添加 / Add More'}
+                ${canConfirm ? '✅ 确认结账 / Confirm Split' : `差 ${sym}${remaining.toFixed(2)} 未付`}
               </button>
             </div>
           </div>
@@ -874,7 +886,11 @@ GC.POS = (function () {
       document.getElementById('m-close').onclick = close;
       document.getElementById('m-cancel').onclick = close;
 
-      // Remove a payment
+      // Clear all
+      const clearBtn = document.getElementById('split-clear');
+      if (clearBtn) clearBtn.addEventListener('click', () => { payments = []; renderModal(); });
+
+      // Remove single payment
       modal.querySelectorAll('[data-rm]').forEach(b => {
         b.addEventListener('click', () => {
           payments.splice(parseInt(b.dataset.rm), 1);
@@ -882,37 +898,58 @@ GC.POS = (function () {
         });
       });
 
-      // Add payment buttons
+      // Add payment buttons — all use the numpad modal (UX P0-1/2/3)
       modal.querySelectorAll('[data-add]').forEach(b => {
         b.addEventListener('click', async () => {
           const method = b.dataset.add;
           if (method === 'cash') {
-            // Reuse cash modal (with remaining as the "due" for change calc)
-            modal.classList.remove('show');
-            const result = await showCashModal(remaining);
-            if (result) {
-              payments.push({
-                method: 'cash',
-                amount: remaining,
-                tendered: result.received,
-                changeGiven: result.change,
-              });
+            // For cash, ask amount via numpad. If the entered amount is
+            // exactly the remaining, no change needed. If less, partial cash
+            // (no change). If equal-to-remaining and customer hands over
+            // more, go through showCashModal for the change calc.
+            const amount = await showAmountNumpadModal({
+              title: '💵 现金金额 / Cash Amount',
+              maxAmount: remaining,
+              sym,
+              hint: `差 ${sym}${remaining.toFixed(2)} (可输入更少做部分现金)`,
+            });
+            if (amount != null) {
+              // If this cash brings us to total exactly AND it equals the
+              // remaining, optionally show change modal in case customer
+              // tendered more. Skip the extra modal for partials.
+              if (Math.abs(amount - remaining) < 0.01) {
+                // Last tender — offer change calc
+                const cashResult = await showCashModal(amount);
+                if (cashResult) {
+                  payments.push({
+                    method: 'cash', amount,
+                    tendered: cashResult.received,
+                    changeGiven: cashResult.change,
+                  });
+                }
+              } else {
+                payments.push({ method: 'cash', amount });
+              }
             }
             renderModal();
           } else if (method === 'paynow') {
-            const amount = await askAmount(remaining, '📱 PayNow 金额 / Amount', sym);
+            const amount = await showAmountNumpadModal({
+              title: '📱 PayNow 金额 / Amount',
+              maxAmount: remaining,
+              sym,
+              hint: '客户已扫码付款',
+            });
             if (amount != null) payments.push({ method: 'paynow', amount });
             renderModal();
           } else if (method === 'member_balance') {
-            const max = Math.min(remaining, member.balance);
-            const amount = await askAmount(max, `💎 会员余额扣款 (最多 ${sym}${max.toFixed(2)})`, sym);
-            if (amount != null) {
-              if (amount > member.balance + 0.01) {
-                GC.toast(`超过余额 / Exceeds balance ${sym}${member.balance.toFixed(2)}`, 'error');
-              } else {
-                payments.push({ method: 'member_balance', amount });
-              }
-            }
+            const max = Math.min(remaining, memberAvailable);
+            const amount = await showAmountNumpadModal({
+              title: '💎 会员余额扣款 / Member Balance',
+              maxAmount: max,
+              sym,
+              hint: `可用余额 ${sym}${memberAvailable.toFixed(2)}`,
+            });
+            if (amount != null) payments.push({ method: 'member_balance', amount });
             renderModal();
           }
         });
@@ -920,7 +957,7 @@ GC.POS = (function () {
 
       // Final confirm
       const confirmBtn = document.getElementById('m-confirm-split');
-      if (confirmBtn) {
+      if (confirmBtn && !confirmBtn.disabled) {
         confirmBtn.onclick = async (e) => {
           if (e.currentTarget.disabled) return;
           e.currentTarget.disabled = true;
@@ -932,14 +969,14 @@ GC.POS = (function () {
               memberId: selectedMemberId,
               guestName: guestName || null,
               cart: cartPayload,
-              payments,   // ← array, not single payment
+              payments,
               discount: discount ? { ...discount, amount: discountAmount() } : null,
-              note: `Split: ${payments.map(p => methodLabel(p.method) + ' ' + sym + p.amount.toFixed(2)).join(' + ')}`,
+              note: `拆账 Split: ${payments.map(p => methodLabel(p.method) + ' ' + sym + p.amount.toFixed(2)).join(' + ')}`,
             });
             GC.toast(`✅ 订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');
             close();
-            // Pass cash info to receipt (first cash payment)
-            const cashPart = payments.find(p => p.method === 'cash');
+            // Pass last cash tender's change info to receipt (if any)
+            const cashPart = payments.find(p => p.method === 'cash' && p.tendered != null);
             if (cashPart) {
               result.order._cashReceived = cashPart.tendered;
               result.order._changeGiven = cashPart.changeGiven;
@@ -957,23 +994,122 @@ GC.POS = (function () {
     renderModal();
   }
 
-  /** Quick amount prompt — reuses GC.prompt with number type. */
-  async function askAmount(maxAmount, title, sym) {
-    const result = await GC.prompt(
-      `输入金额，最多 ${sym}${maxAmount.toFixed(2)}\nEnter amount, max ${sym}${maxAmount.toFixed(2)}`,
-      { title, type: 'number', defaultValue: maxAmount.toFixed(2) }
-    );
-    if (result === null || result === '') return null;
-    const n = parseFloat(result);
-    if (isNaN(n) || n <= 0) {
-      GC.toast('请输入有效金额 / Invalid amount', 'error');
-      return null;
-    }
-    if (n > maxAmount + 0.01) {
-      GC.toast(`超过剩余 / Exceeds remaining ${sym}${maxAmount.toFixed(2)}`, 'error');
-      return null;
-    }
-    return Math.round(n * 100) / 100;
+  function round2Local(n) { return Math.round(n * 100) / 100; }
+
+  /**
+   * Numpad-based amount entry modal — touch-first, no OS keyboard.
+   * Used by Split Bill for cash partials, PayNow, member-balance tenders.
+   * (UX P0-1/2/3 audit 2026-05-14: GC.prompt had no numpad and auto-filled
+   *  the full max, causing one-tap-overpay bugs on iPad.)
+   *
+   * opts: { title, maxAmount, sym, hint?, allowExceed? }
+   * Returns: Promise<number|null>
+   */
+  function showAmountNumpadModal(opts) {
+    return new Promise(resolve => {
+      const { title, maxAmount, sym, hint, allowExceed } = opts;
+      const modal = document.getElementById('modal');
+      const presets = (() => {
+        // Smart quick presets: full, half, common round values <= max
+        const set = new Set();
+        set.add(maxAmount);
+        if (maxAmount > 1) set.add(Math.floor(maxAmount));
+        if (maxAmount > 10) set.add(Math.round(maxAmount / 2));
+        // Common SG bill denominations
+        [2, 5, 10, 20, 50].forEach(v => { if (v <= maxAmount) set.add(v); });
+        return [...set].sort((a, b) => a - b);
+      })();
+
+      modal.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-content modal-cash">
+            <div class="modal-header">
+              <h3>${GC.esc(title)}</h3>
+              <button class="modal-close" id="m-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="cash-due-line">
+                <span>剩余 / Remaining</span>
+                <span class="cash-due-amount">${sym}${maxAmount.toFixed(2)}</span>
+              </div>
+              ${hint ? `<div class="form-hint" style="margin-top:6px">${GC.esc(hint)}</div>` : ''}
+
+              <div class="form-group" style="margin-top:18px">
+                <label class="form-label">输入金额 / Enter Amount</label>
+                <div class="rate-input-group" style="max-width:240px">
+                  <span class="rate-prefix">${sym}</span>
+                  <input type="text" inputmode="none" id="amt-input" class="form-input settings-input"
+                    placeholder="0.00"
+                    style="font-size:1.5rem;font-weight:700;width:160px;text-align:right" readonly>
+                </div>
+                <div class="cash-presets">
+                  ${presets.map(p => `<button class="cash-preset-btn" data-amount="${p}">${sym}${p}</button>`).join('')}
+                </div>
+              </div>
+
+              <div class="cash-numpad">
+                <button class="np-btn" data-digit="1">1</button>
+                <button class="np-btn" data-digit="2">2</button>
+                <button class="np-btn" data-digit="3">3</button>
+                <button class="np-btn" data-digit="4">4</button>
+                <button class="np-btn" data-digit="5">5</button>
+                <button class="np-btn" data-digit="6">6</button>
+                <button class="np-btn" data-digit="7">7</button>
+                <button class="np-btn" data-digit="8">8</button>
+                <button class="np-btn" data-digit="9">9</button>
+                <button class="np-btn dot" data-digit=".">.</button>
+                <button class="np-btn" data-digit="0">0</button>
+                <button class="np-btn back" data-back>⌫</button>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
+              <button class="btn btn-primary" id="m-ok" disabled>确认 / Confirm</button>
+            </div>
+          </div>
+        </div>`;
+      modal.classList.add('show');
+
+      const input = document.getElementById('amt-input');
+      const okBtn = document.getElementById('m-ok');
+      const updateOk = () => {
+        const n = parseFloat(input.value) || 0;
+        if (n <= 0) { okBtn.disabled = true; return; }
+        if (!allowExceed && n > maxAmount + 0.01) {
+          okBtn.disabled = true;
+          input.style.color = 'var(--red)';
+          return;
+        }
+        input.style.color = '';
+        okBtn.disabled = false;
+      };
+
+      modal.querySelectorAll('.cash-preset-btn').forEach(b => {
+        b.addEventListener('click', () => { input.value = b.dataset.amount; updateOk(); });
+      });
+      modal.querySelectorAll('.np-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          if (b.hasAttribute('data-back')) {
+            input.value = input.value.slice(0, -1);
+          } else {
+            const d = b.dataset.digit;
+            if (d === '.' && input.value.includes('.')) return;
+            input.value = (input.value || '') + d;
+          }
+          updateOk();
+        });
+      });
+
+      const done = (result) => { modal.classList.remove('show'); modal.innerHTML = ''; resolve(result); };
+      document.getElementById('m-close').onclick = () => done(null);
+      document.getElementById('m-cancel').onclick = () => done(null);
+      okBtn.onclick = () => {
+        const n = parseFloat(input.value) || 0;
+        if (n <= 0) return;
+        if (!allowExceed && n > maxAmount + 0.01) return;
+        done(Math.round(n * 100) / 100);
+      };
+    });
   }
 
   /* ---- Receipt modal ---- */
@@ -981,12 +1117,24 @@ GC.POS = (function () {
     const sym = GC.Store.getSettings().currencySymbol;
     const fmtTime = ts => new Date(ts).toLocaleString('zh-CN', { hour12: false });
     const member = order.memberId ? GC.Store.getMember(order.memberId) : null;
-    const methodLabel = ({
+    const methodNameMap = {
       cash: '现金 Cash',
       paynow: 'PayNow',
       member_balance: '会员余额 Member Balance',
       card: '信用卡 Card',
-    })[order.paymentMethod] || order.paymentMethod;
+      grab: '🛵 Grab',
+      foodpanda: '🐼 FoodPanda',
+      mixed: '拆账 Split',
+    };
+    const methodLabel = methodNameMap[order.paymentMethod] || order.paymentMethod;
+    // For mixed orders show per-tender breakdown (Ops P0-2 audit 2026-05-14)
+    const tenderRows = order.paymentMethod === 'mixed'
+      ? (GC.Store.getOrderPaymentsFor ? GC.Store.getOrderPaymentsFor(order.id) : [])
+      : [];
+    // Pre/post balance line for any order with a member_balance tender (Ops P1-7)
+    const memberTender = order.paymentMethod === 'member_balance'
+      ? order.total
+      : tenderRows.filter(t => t.method === 'member_balance').reduce((s, t) => s + Number(t.amount), 0);
 
     const lines = items.map(i => `
       <div class="rcpt-line">
@@ -1016,11 +1164,22 @@ GC.POS = (function () {
               <span>${sym}${order.total.toFixed(2)}</span>
             </div>
             <div class="rcpt-meta">付款方式 / Paid via: ${methodLabel}</div>
-            ${order._cashReceived != null ? `
+            ${tenderRows.length > 0 ? `
+              <div class="rcpt-divider" style="margin:6px 0"></div>
+              ${tenderRows.map(t => `
+                <div class="rcpt-line">
+                  <span>${methodNameMap[t.method] || t.method}</span>
+                  <span>${sym}${Number(t.amount).toFixed(2)}</span>
+                </div>
+                ${t.tendered != null ? `<div class="rcpt-line"><span style="padding-left:12px;font-size:0.85em">收 / Tendered</span><span>${sym}${Number(t.tendered).toFixed(2)}</span></div>` : ''}
+                ${t.changeGiven != null && Number(t.changeGiven) > 0 ? `<div class="rcpt-line"><span style="padding-left:12px;font-size:0.85em">找 / Change</span><span>${sym}${Number(t.changeGiven).toFixed(2)}</span></div>` : ''}
+              `).join('')}
+            ` : ''}
+            ${order._cashReceived != null && tenderRows.length === 0 ? `
               <div class="rcpt-line"><span>收 / Tendered</span><span>${sym}${order._cashReceived.toFixed(2)}</span></div>
               <div class="rcpt-line"><span>找 / Change</span><span>${sym}${order._changeGiven.toFixed(2)}</span></div>
             ` : ''}
-            ${member && order.paymentMethod === 'member_balance' ? `<div class="rcpt-meta">余额 / Balance: ${sym}${member.balance.toFixed(2)}</div>` : ''}
+            ${member && memberTender > 0 ? `<div class="rcpt-meta">余额 / Balance: ${sym}${(member.balance + memberTender).toFixed(2)} → ${sym}${member.balance.toFixed(2)}</div>` : ''}
             <div class="rcpt-footer">感谢光临 · Thank you ❤️</div>
           </div>
           <div class="modal-footer">

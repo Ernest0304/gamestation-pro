@@ -543,10 +543,12 @@ GC.History = (function () {
                     step="0.10" placeholder="${(z.cash + z.topUpsCash).toFixed(2)}"
                     style="font-size:1.3rem;font-weight:700;width:140px;text-align:right">
                 </div>
-                <div class="form-hint">
-                  系统预期 ${sym}${(z.cash + z.topUpsCash).toFixed(2)}
-                  = 订单/台 ${sym}${z.cash.toFixed(2)}${z.topUpsCash > 0 ? ` + 充值 ${sym}${z.topUpsCash.toFixed(2)}` : ''}
-                  — 差额会自动记录到日结
+                <div class="form-hint" style="line-height:1.5">
+                  <strong>预期现金</strong> ${sym}${(z.cash + z.topUpsCash).toFixed(2)}<br>
+                  <small style="color:var(--text-muted)">
+                    包括：订单/台 ${sym}${z.cash.toFixed(2)}${z.topUpsCash > 0 ? ` ＋ 充值 ${sym}${z.topUpsCash.toFixed(2)}` : ''}
+                  </small><br>
+                  <small style="color:var(--text-muted)">差额会自动记录到日结</small>
                 </div>
               </div>
               <div class="form-group">

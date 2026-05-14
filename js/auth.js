@@ -98,6 +98,8 @@ GC.Auth = (function () {
       logoutBtn.textContent = '退出';
       logoutBtn.style.marginLeft = '12px';
       logoutBtn.addEventListener('click', async () => {
+        // Mark this as user-initiated so app.js doesn't show a 'session expired' toast.
+        GC._userInitiatedLogout = true;
         await GC.supabase.auth.signOut();
       });
       nav.querySelector('.nav-links').appendChild(logoutBtn);

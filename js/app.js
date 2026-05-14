@@ -204,27 +204,51 @@ window.GC = window.GC || {};
   };
 
   /* ---- Init ---- */
+  // Track whether the user explicitly clicked the logout button. If SIGNED_OUT
+  // fires WITHOUT a click, it's session expiry / refresh failure — different UX.
+  GC._userInitiatedLogout = false;
+
   async function init() {
     // Listen for auth changes (handles login/logout after initial load)
     GC.supabase.auth.onAuthStateChange(async (event, session) => {
+      // Diagnostic: log every auth event so we can debug auto-logout reports.
+      // Open DevTools Console to see these.
+      console.log('[Auth]', event, session ? `(uid: ${session.user?.id?.slice(0,8)}...)` : '(no session)');
+
       if (event === 'SIGNED_IN' && session) {
-        // If the user already gave up on a stuck login (8s+ since they clicked),
-        // surface that the late success actually arrived rather than silently
-        // booting the dashboard.
         const elapsed = GC._authAttemptStart ? Date.now() - GC._authAttemptStart : 0;
         if (elapsed > 8000 && !booted) {
           GC.toast?.(`登录成功（网络较慢，${Math.round(elapsed/1000)}秒）/ Logged in (slow network)`, 'success');
         }
         GC._authAttemptStart = null;
         await bootApp();
+      } else if (event === 'TOKEN_REFRESHED') {
+        // Access token was auto-refreshed using refresh token — no UI change needed.
+        // Just acknowledge so console shows the system is working.
+        console.log('[Auth] Token refreshed silently — session continuing');
+      } else if (event === 'USER_UPDATED') {
+        // User metadata changed — usually irrelevant for us
+        console.log('[Auth] User updated');
       } else if (event === 'SIGNED_OUT') {
         GC._authAttemptStart = null;
-        // Tear down realtime channels + cached data so the next login starts
-        // clean (prevents "cannot add postgres_changes after subscribe" errors)
         if (GC.Store && GC.Store.resetForLogout) GC.Store.resetForLogout();
+        // If the user DIDN'T click logout, this is session expiry — tell them
+        // instead of silently dropping back to login.
+        if (!GC._userInitiatedLogout) {
+          setTimeout(() => {
+            GC.toast?.('登录会话过期，请重新登录 / Session expired, please log in again', 'error');
+          }, 200);
+        }
+        GC._userInitiatedLogout = false;  // reset for next time
         showLogin();
       } else if (event === 'INITIAL_SESSION') {
-        // Handled below by getSession — ignore here to avoid double-boot
+        // If there's no session, the getSession() path below will showLogin().
+        // If there IS a session, SIGNED_IN doesn't fire — INITIAL_SESSION is
+        // our only signal. Treat it as a login if booted is still false.
+        if (session && !booted) {
+          console.log('[Auth] Restoring session from storage');
+          await bootApp();
+        }
       }
     });
 

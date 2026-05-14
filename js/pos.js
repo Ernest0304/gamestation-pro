@@ -14,12 +14,22 @@ GC.POS = (function () {
   // Discount applied to cart (cleared on checkout/cart-clear)
   // { type: 'percent'|'fixed', value: number, reason: string }
   let discount = null;
+  // Wave B (Migration 008): takeaway flag + ad-hoc extra charges
+  let takeaway = false;
+  let extraCharges = [];     // [{ label, amount }]
+  const TAKEAWAY_FEE = 0.20; // SG per-order box fee
 
   function tierIcon(t) { return ({ platinum: '💎', silver: '🥈', regular: '👤' })[t] || '👤'; }
   function tierLabel(t) { return ({ platinum: 'Platinum', silver: 'Silver', regular: 'Regular' })[t] || ''; }
 
+  function takeawayAmount() { return takeaway ? TAKEAWAY_FEE : 0; }
+  function extrasAmount() {
+    return Math.round(extraCharges.reduce((s, e) => s + Number(e.amount || 0), 0) * 100) / 100;
+  }
   function cartSubtotal() {
-    return cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+    // Items + takeaway box + extra charges. Discount applies AFTER.
+    const items = cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+    return Math.round((items + takeawayAmount() + extrasAmount()) * 100) / 100;
   }
   function discountAmount() {
     if (!discount) return 0;
@@ -74,6 +84,8 @@ GC.POS = (function () {
     selectedMemberId = null;
     guestName = '';
     discount = null;
+    takeaway = false;
+    extraCharges = [];
     render();
   }
 
@@ -216,7 +228,34 @@ GC.POS = (function () {
 
         <div class="pos-totals-block">
           <div class="pos-tr"><span>商品 / Items</span><span>${cartCount()}</span></div>
-          <div class="pos-tr"><span>小计 / Subtotal</span><span>${sym}${subtotal.toFixed(2)}</span></div>
+          <div class="pos-tr"><span>小计 / Subtotal</span><span>${sym}${cart.reduce((s,c) => s + c.unitPrice * c.quantity, 0).toFixed(2)}</span></div>
+
+          <div class="pos-tr takeaway-row">
+            <span>
+              <label class="pos-takeaway-toggle">
+                <input type="checkbox" id="pos-takeaway" ${takeaway ? 'checked' : ''} ${!canCheckout ? 'disabled' : ''}>
+                <span>🥡 外带打包 / Takeaway</span>
+              </label>
+            </span>
+            <span class="${takeaway ? '' : 'pos-muted'}">+ ${sym}${TAKEAWAY_FEE.toFixed(2)}</span>
+          </div>
+
+          ${extraCharges.length > 0 ? extraCharges.map((e, i) => `
+            <div class="pos-tr extra-charge-line">
+              <span>
+                ${GC.esc(e.label)}
+                <button class="pos-discount-remove" data-rm-extra="${i}" title="移除">×</button>
+              </span>
+              <span class="${e.amount >= 0 ? '' : 'discount-amount'}">${e.amount >= 0 ? '＋' : '−'}${sym}${Math.abs(e.amount).toFixed(2)}</span>
+            </div>
+          `).join('') : ''}
+
+          <div class="pos-discount-row">
+            <button class="pos-discount-btn" id="pos-add-charge" ${!canCheckout ? 'disabled' : ''}>
+              ➕ 加收费 / Add Charge
+            </button>
+          </div>
+
           ${discount ? `
             <div class="pos-tr discount-line">
               <span>
@@ -247,7 +286,11 @@ GC.POS = (function () {
             ` : ''}
             <button class="pos-pay-btn ${member ? '' : 'primary'}" id="pay-cash" ${!canCheckout ? 'disabled' : ''}>💵 现金 Cash</button>
             <button class="pos-pay-btn" id="pay-paynow" ${!canCheckout ? 'disabled' : ''}>📱 PayNow</button>
-            <button class="pos-pay-btn" id="pay-split" ${!canCheckout ? 'disabled' : ''}>🔀 拆账 / Split Bill</button>
+            <button class="pos-pay-btn" id="pay-split" ${!canCheckout ? 'disabled' : ''}>🔀 拆账 / Split</button>
+          </div>
+          <div class="pos-pay-options pos-pay-delivery">
+            <button class="pos-pay-btn pay-delivery grab" id="pay-grab" ${!canCheckout ? 'disabled' : ''}>🛵 Grab</button>
+            <button class="pos-pay-btn pay-delivery foodpanda" id="pay-foodpanda" ${!canCheckout ? 'disabled' : ''}>🐼 FoodPanda</button>
           </div>
         </div>
       </div>`;
@@ -311,15 +354,33 @@ GC.POS = (function () {
     const guestInput = document.getElementById('pos-guest-name');
     if (guestInput) guestInput.addEventListener('input', e => { guestName = e.target.value; });
 
+    // Takeaway toggle
+    const tw = document.getElementById('pos-takeaway');
+    if (tw) tw.addEventListener('change', e => { takeaway = e.target.checked; render(); });
+
+    // Add custom charge
+    const addCharge = document.getElementById('pos-add-charge');
+    if (addCharge) addCharge.addEventListener('click', showAddChargeModal);
+    document.querySelectorAll('[data-rm-extra]').forEach(b => {
+      b.addEventListener('click', () => {
+        extraCharges.splice(parseInt(b.dataset.rmExtra), 1);
+        render();
+      });
+    });
+
     // Payment buttons
     const payBal = document.getElementById('pay-balance');
     const payCash = document.getElementById('pay-cash');
     const payNow = document.getElementById('pay-paynow');
     const paySplit = document.getElementById('pay-split');
+    const payGrab = document.getElementById('pay-grab');
+    const payFP = document.getElementById('pay-foodpanda');
     if (payBal) payBal.addEventListener('click', () => checkout('member_balance'));
     if (payCash) payCash.addEventListener('click', () => checkout('cash'));
     if (payNow) payNow.addEventListener('click', () => checkout('paynow'));
     if (paySplit) paySplit.addEventListener('click', () => showSplitBillModal());
+    if (payGrab) payGrab.addEventListener('click', () => checkoutDelivery('grab'));
+    if (payFP) payFP.addEventListener('click', () => checkoutDelivery('foodpanda'));
 
     // Search
     const search = document.getElementById('pos-search');
@@ -654,6 +715,8 @@ GC.POS = (function () {
         payment: { method },
         discount: discount ? { ...discount, amount: discountAmount() } : null,
         note: cashNote,
+        takeaway,
+        extraCharges,
       });
 
       GC.toast(`订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');
@@ -666,6 +729,94 @@ GC.POS = (function () {
     } catch (e) {
       GC.toast('结账失败 / Failed: ' + e.message, 'error');
     }
+  }
+
+  /* ---- Delivery checkout (Grab / FoodPanda) ----
+     Smart flow: cashier confirms items match the platform order, then enters
+     the platform's total. System computes diff vs in-store price and adds
+     it as an "外卖差额" extra-charge line so the order total matches the
+     platform's invoice.
+  */
+  async function checkoutDelivery(platform) {
+    if (cart.length === 0) return;
+    const sym = GC.Store.getSettings().currencySymbol;
+    const inStoreTotal = cartTotal();
+    const label = platform === 'grab' ? '🛵 Grab' : '🐼 FoodPanda';
+
+    // Step 1: ask for the platform's total
+    const platformTotal = await showAmountNumpadModal({
+      title: `${label} — 平台账单总额 / Platform Total`,
+      maxAmount: inStoreTotal * 5,   // generous ceiling, allowExceed
+      sym,
+      hint: `本店金额 ${sym}${inStoreTotal.toFixed(2)}。请输入平台显示的应收总额，系统会自动加差额。`,
+      allowExceed: true,
+    });
+    if (platformTotal == null) return;
+
+    // Step 2: compute diff. Positive diff → add as extra charge.
+    // Negative diff (platform charges less) → also record as negative extra
+    // so the books balance. Tiny (|diff|<0.01) → skip the extra line.
+    const diff = Math.round((platformTotal - inStoreTotal) * 100) / 100;
+    let appliedExtras = extraCharges.slice();
+    if (Math.abs(diff) >= 0.01) {
+      appliedExtras = [...appliedExtras, {
+        label: `外卖差额 (${platform === 'grab' ? 'Grab' : 'FoodPanda'})`,
+        amount: diff,
+      }];
+    }
+
+    // Step 3: confirm
+    const ok = await GC.confirm(
+      `平台 / Platform: ${label}\n` +
+      `本店金额 / In-store: ${sym}${inStoreTotal.toFixed(2)}\n` +
+      `平台金额 / Platform: ${sym}${platformTotal.toFixed(2)}\n` +
+      (Math.abs(diff) >= 0.01 ? `差额 / Diff: ${diff >= 0 ? '+' : ''}${sym}${diff.toFixed(2)}\n` : '') +
+      `应收 / Total to Record: ${sym}${platformTotal.toFixed(2)}`,
+      { title: '确认外卖订单 / Confirm Delivery Order', confirmText: '确认 / Confirm' }
+    );
+    if (!ok) return;
+
+    try {
+      const cartPayload = cart.map(c => ({
+        menuItemId: c.menuItemId, quantity: c.quantity, note: c.note,
+      }));
+      const result = await GC.Store.createOrder({
+        memberId: selectedMemberId,
+        guestName: guestName || `${label} 外卖`,
+        cart: cartPayload,
+        payment: { method: platform },
+        discount: discount ? { ...discount, amount: discountAmount() } : null,
+        takeaway,
+        extraCharges: appliedExtras,
+        deliveryPlatformTotal: platformTotal,
+        note: `${label} 外卖订单 · 平台总额 ${sym}${platformTotal.toFixed(2)}`,
+      });
+      GC.toast(`✅ ${label} 订单 #${result.order.orderNo} · ${sym}${platformTotal.toFixed(2)}`, 'success');
+      showReceipt(result.order, result.items);
+      clearCart();
+    } catch (e) {
+      GC.toast('结账失败 / Failed: ' + e.message, 'error');
+    }
+  }
+
+  /* ---- Add custom charge modal ---- */
+  async function showAddChargeModal() {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const label = await GC.prompt(
+      '收费名称 / Charge Label (例：包装费, 加大杯, 外卖差额)',
+      { title: '➕ 加收费 / Add Charge', defaultValue: '' }
+    );
+    if (label == null || !label.trim()) return;
+    const amount = await showAmountNumpadModal({
+      title: `${label.trim()} — 金额 / Amount`,
+      maxAmount: 9999,
+      sym,
+      hint: '可以输入正数（加价）或之后用减号；金额不可为 0',
+      allowExceed: true,
+    });
+    if (amount == null || amount <= 0) return;
+    extraCharges.push({ label: label.trim(), amount });
+    render();
   }
 
   /* ---- Cash payment modal with change calculator ---- */
@@ -971,6 +1122,8 @@ GC.POS = (function () {
               cart: cartPayload,
               payments,
               discount: discount ? { ...discount, amount: discountAmount() } : null,
+              takeaway,
+              extraCharges,
               note: `拆账 Split: ${payments.map(p => methodLabel(p.method) + ' ' + sym + p.amount.toFixed(2)).join(' + ')}`,
             });
             GC.toast(`✅ 订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');

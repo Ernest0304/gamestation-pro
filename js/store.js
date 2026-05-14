@@ -155,6 +155,11 @@ GC.Store = (function () {
       status: row.status,
       note: row.note,
       cashier: row.cashier,
+      // Migration 008: delivery + takeaway + extra_charges
+      takeaway: !!row.takeaway,
+      takeawayCharge: Number(row.takeaway_charge || 0),
+      extraCharges: Array.isArray(row.extra_charges) ? row.extra_charges : [],
+      deliveryPlatformTotal: row.delivery_platform_total != null ? Number(row.delivery_platform_total) : null,
       createdAt: new Date(row.created_at).getTime(),
       completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
     };
@@ -1053,7 +1058,15 @@ GC.Store = (function () {
    *           or for backwards compat, payment: { method } applies whole total to one method
    * Returns { order, items, payments }.
    */
-  async function createOrder({ memberId, guestName, cart, payment, payments, note, cashier, discount: discountInput }) {
+  async function createOrder({
+    memberId, guestName, cart, payment, payments, note, cashier,
+    discount: discountInput,
+    // Migration 008 additions
+    takeaway = false,
+    takeawayCharge,         // override the default $0.20 if needed
+    extraCharges = [],      // [{label, amount}] — manual add-on or delivery diff
+    deliveryPlatformTotal,  // when Grab/FoodPanda is the tender
+  }) {
     if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
     const actor = cashier || (await getCurrentUserEmail());
 
@@ -1075,7 +1088,28 @@ GC.Store = (function () {
       };
     });
 
-    const subtotal = round2(items.reduce((s, i) => s + i.subtotal, 0));
+    const itemsSubtotal = round2(items.reduce((s, i) => s + i.subtotal, 0));
+
+    // Takeaway box charge: one per order. Settings can override default $0.20.
+    const settings = _cache.settings || {};
+    const defaultTakeawayCharge = settings.takeawayCharge != null
+      ? Number(settings.takeawayCharge) : 0.20;
+    const takeawayAmt = takeaway
+      ? round2(takeawayCharge != null ? Number(takeawayCharge) : defaultTakeawayCharge)
+      : 0;
+
+    // Extra charges (manual add-on or delivery-diff line items)
+    const cleanedExtras = (Array.isArray(extraCharges) ? extraCharges : [])
+      .map(e => ({
+        label: String(e.label || '其他费用').slice(0, 80),
+        amount: round2(Number(e.amount || 0)),
+      }))
+      .filter(e => e.amount !== 0);   // allow negative (e.g., manual adjustment down)
+    const extrasTotal = round2(cleanedExtras.reduce((s, e) => s + e.amount, 0));
+
+    // Subtotal for discount calc = items + takeaway + extras
+    const subtotal = round2(itemsSubtotal + takeawayAmt + extrasTotal);
+
     let discountAmt = 0;
     let discountNote = null;
     if (discountInput && (discountInput.amount > 0 || discountInput.value > 0)) {
@@ -1159,6 +1193,11 @@ GC.Store = (function () {
       note: combinedNote,
       cashier: actor,
       completed_at: new Date().toISOString(),
+      // Migration 008 fields
+      takeaway: !!takeaway,
+      takeaway_charge: takeawayAmt,
+      extra_charges: cleanedExtras,
+      delivery_platform_total: deliveryPlatformTotal != null ? round2(Number(deliveryPlatformTotal)) : null,
     };
     const { data: orderData, error: orderErr } = await sb.from('orders').insert(orderRow).select().single();
     if (orderErr) throw orderErr;
@@ -1292,7 +1331,7 @@ GC.Store = (function () {
     );
 
     // Aggregate by payment method (orders + sessions both contribute)
-    const byMethod = { cash: 0, paynow: 0, member_balance: 0, card: 0 };
+    const byMethod = { cash: 0, paynow: 0, member_balance: 0, card: 0, grab: 0, foodpanda: 0 };
     dayPayments.forEach(p => {
       byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
     });
@@ -1306,6 +1345,14 @@ GC.Store = (function () {
     const totalDiscount = dayOrders.reduce((s, o) => s + Number(o.discount || 0), 0);
     const topupsCash = dayTopUps.reduce((s, t) => s + Number(t.amount), 0);
     const topupsBonus = dayTopUps.reduce((s, t) => s + Number(t.bonus || 0), 0);
+    // Delivery / takeaway / extra-charge totals (Wave B 2026-05-14)
+    const deliveryOrders = dayOrders.filter(o => o.paymentMethod === 'grab' || o.paymentMethod === 'foodpanda');
+    const takeawayCount = dayOrders.filter(o => o.takeaway).length;
+    const takeawayChargeTotal = dayOrders.reduce((s, o) => s + Number(o.takeawayCharge || 0), 0);
+    const extraChargesTotal = dayOrders.reduce((s, o) => {
+      const arr = Array.isArray(o.extraCharges) ? o.extraCharges : [];
+      return s + arr.reduce((ss, e) => ss + Number(e.amount || 0), 0);
+    }, 0);
 
     return {
       day,
@@ -1317,10 +1364,112 @@ GC.Store = (function () {
       paynow: round2(byMethod.paynow),
       memberBalance: round2(byMethod.member_balance),
       card: round2(byMethod.card),
+      grab: round2(byMethod.grab),
+      foodpanda: round2(byMethod.foodpanda),
       totalDiscount: round2(totalDiscount),
       topUpsCash: round2(topupsCash),
       topUpsBonus: round2(topupsBonus),
+      deliveryCount: deliveryOrders.length,
+      takeawayCount,
+      takeawayChargeTotal: round2(takeawayChargeTotal),
+      extraChargesTotal: round2(extraChargesTotal),
       voidedOrders: voided.map(v => ({ orderNo: v.orderNo, total: v.total })),
+    };
+  }
+
+  /**
+   * Aggregate revenue for an arbitrary time window with category filter +
+   * hourly breakdown. Used by the Reports page filter (Wave B 2026-05-14).
+   *
+   * opts:
+   *   startDate, endDate: 'YYYY-MM-DD' (inclusive). startDate's business day
+   *     starts at 12:00 SGT; endDate's business day ends next-day 01:00 SGT
+   *     (shop hours 12:00–25:00). If undefined, defaults to today only.
+   *   startHour, endHour: integer 12–25 (24 = midnight, 25 = 01:00 next day).
+   *     Window is [startDate@startHour, endDate@endHour). Default 12–25 (all).
+   *   category: 'all' | 'food' | 'gaming'. Default 'all'.
+   *
+   * Returns:
+   *   { startMs, endMs, orderCount, sessionCount, revenue, byMethod,
+   *     hourly: [{ label: 'D 18:00', revenue }], breakdown: {food, gaming} }
+   */
+  function getRangeSummary(opts = {}) {
+    const today = (() => {
+      const now = new Date();
+      const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
+      return sgt.toISOString().slice(0, 10);
+    })();
+    const startDate = opts.startDate || today;
+    const endDate = opts.endDate || startDate;
+    const startHour = opts.startHour != null ? opts.startHour : 12;
+    const endHour = opts.endHour != null ? opts.endHour : 25;
+    const category = opts.category || 'all';
+
+    // Build epoch range. SGT-pinned. "Hour 24" → +12h offset from noon.
+    const sgtMs = (yyyymmdd, hourOffset) =>
+      new Date(yyyymmdd + 'T12:00:00+08:00').getTime() + (hourOffset - 12) * 3600 * 1000;
+    const startMs = sgtMs(startDate, startHour);
+    const endMs = sgtMs(endDate, endHour);
+
+    const inRange = (ts) => ts >= startMs && ts < endMs;
+
+    const orders = (category === 'gaming') ? [] : _cache.orders.filter(o =>
+      o.status === 'completed' && inRange(o.completedAt || o.createdAt)
+    );
+    const sessions = (category === 'food') ? [] : _cache.sessions.filter(s =>
+      s.status === 'completed' && s.endTime && inRange(s.endTime)
+    );
+
+    const orderIds = new Set(orders.map(o => o.id));
+    const payments = _cache.orderPayments.filter(p => orderIds.has(p.orderId));
+
+    const byMethod = { cash: 0, paynow: 0, member_balance: 0, card: 0, grab: 0, foodpanda: 0 };
+    payments.forEach(p => {
+      byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
+    });
+    sessions.forEach(s => {
+      const m = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
+      byMethod[m] = (byMethod[m] || 0) + Number(s.total);
+    });
+
+    // Hourly breakdown: bucketize by Singapore hour-of-day.
+    const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
+    const hourly = [];
+    for (let i = 0; i < hours; i++) {
+      const hStart = startMs + i * 3600000;
+      const hEnd = hStart + 3600000;
+      let rev = 0;
+      orders.forEach(o => {
+        const t = o.completedAt || o.createdAt;
+        if (t >= hStart && t < hEnd) rev += Number(o.total);
+      });
+      sessions.forEach(s => {
+        if (s.endTime >= hStart && s.endTime < hEnd) rev += Number(s.total);
+      });
+      // Label in SGT
+      const labelDate = new Date(hStart);
+      const sgtH = (labelDate.getUTCHours() + 8) % 24;
+      const dateLabel = new Date(hStart + 8 * 3600000).toISOString().slice(5, 10); // MM-DD
+      hourly.push({
+        label: `${dateLabel} ${String(sgtH).padStart(2, '0')}:00`,
+        startMs: hStart,
+        revenue: round2(rev),
+      });
+    }
+
+    const foodRevenue = orders.reduce((s, o) => s + Number(o.total), 0);
+    const gamingRevenue = sessions.reduce((s, o) => s + Number(o.total), 0);
+    const revenue = round2(foodRevenue + gamingRevenue);
+
+    return {
+      startMs, endMs,
+      orderCount: orders.length,
+      sessionCount: sessions.length,
+      revenue,
+      byMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, round2(v)])),
+      hourly,
+      breakdown: { food: round2(foodRevenue), gaming: round2(gamingRevenue) },
+      filters: { startDate, endDate, startHour, endHour, category },
     };
   }
 
@@ -1537,7 +1686,7 @@ GC.Store = (function () {
     getOrders, getOrder, getOrderItemsForOrder, getOrderPaymentsFor,
     createOrder, voidOrder,
     // Daily close / Z-Report
-    getDailySummary, getDailyCloses, closeDay,
+    getDailySummary, getRangeSummary, getDailyCloses, closeDay,
     // Billing
     getRateFor, resolveRateTier,
     computeWalkInBill, computeMemberBill,

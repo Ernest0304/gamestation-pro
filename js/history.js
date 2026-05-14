@@ -11,6 +11,14 @@ GC.History = (function () {
   let rangeFrom = localDateStr(new Date());
   let rangeTo = localDateStr(new Date());
 
+  // Hour/category filter state (Wave B 2026-05-14)
+  // Shop hours: 12:00 → 25:00 (next-day 01:00). Default = full business day today.
+  let filterStartDate = localDateStr(new Date());
+  let filterEndDate = localDateStr(new Date());
+  let filterStartHour = 12;
+  let filterEndHour = 25;
+  let filterCategory = 'all';   // 'all' | 'food' | 'gaming'
+
   function localDateStr(d) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
@@ -335,6 +343,7 @@ GC.History = (function () {
           <div class="z-stat cash">
             <span class="z-stat-label">💵 现金 / Cash</span>
             <span class="z-stat-value">${sym}${z.cash.toFixed(2)}</span>
+            ${z.topUpsCash > 0 ? `<small>含充值 +${sym}${z.topUpsCash.toFixed(2)}</small>` : ''}
           </div>
           <div class="z-stat paynow">
             <span class="z-stat-label">📱 PayNow</span>
@@ -349,9 +358,21 @@ GC.History = (function () {
             <span class="z-stat-value">${sym}${z.topUpsCash.toFixed(2)}</span>
             ${z.topUpsBonus > 0 ? `<small>+ ${sym}${z.topUpsBonus.toFixed(2)} 福利金 / bonus given</small>` : ''}
           </div>
+          ${(z.grab || 0) > 0 || (z.foodpanda || 0) > 0 || z.deliveryCount > 0 ? `
+            <div class="z-stat grab">
+              <span class="z-stat-label">🛵 Grab</span>
+              <span class="z-stat-value">${sym}${(z.grab || 0).toFixed(2)}</span>
+            </div>
+            <div class="z-stat foodpanda">
+              <span class="z-stat-label">🐼 FoodPanda</span>
+              <span class="z-stat-value">${sym}${(z.foodpanda || 0).toFixed(2)}</span>
+            </div>
+          ` : ''}
         </div>
         <div class="z-report-totals">
-          <span>订单 ${z.orderCount} · 游戏台 ${z.sessionCount}${z.voidedCount > 0 ? ` · 作废 ${z.voidedCount}` : ''} · 折扣 ${sym}${z.totalDiscount.toFixed(2)}</span>
+          <span>
+            订单 ${z.orderCount} · 游戏台 ${z.sessionCount}${z.voidedCount > 0 ? ` · 作废 ${z.voidedCount}` : ''}${z.takeawayCount ? ` · 外带 ${z.takeawayCount}` : ''}${z.deliveryCount ? ` · 外卖 ${z.deliveryCount}` : ''} · 折扣 ${sym}${z.totalDiscount.toFixed(2)}
+          </span>
           <span class="z-report-total"><strong>总收入 / Total: ${sym}${z.totalRevenue.toFixed(2)}</strong></span>
         </div>
       </div>`;
@@ -366,6 +387,8 @@ GC.History = (function () {
       </div>
 
       ${zReportHtml}
+
+      ${renderHourFilter(sym)}
 
       <h3 class="section-title" style="margin-top:24px">🎮 游戏台明细 / Gaming Detail</h3>
 
@@ -433,6 +456,9 @@ GC.History = (function () {
     const zBtn = document.getElementById('z-close-day');
     if (zBtn) zBtn.addEventListener('click', showCloseDayModal);
 
+    // Hour/category filter panel
+    bindHourFilterEvents();
+
     // Mode tabs
     document.querySelectorAll('.history-tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -471,6 +497,130 @@ GC.History = (function () {
 
   function destroy() {
     if (chart) { chart.destroy(); chart = null; }
+  }
+
+  /* ---- Hour / Category filter (Wave B 2026-05-14) ---- */
+  // 12pm to next-day 1am: 13 integer steps (12..25).
+  function hourOptions(selected) {
+    const opts = [];
+    for (let h = 12; h <= 25; h++) {
+      const label = h < 24 ? `${String(h).padStart(2, '0')}:00`
+                   : h === 24 ? '00:00 (午夜)'
+                   : '01:00 (次日)';
+      opts.push(`<option value="${h}" ${selected === h ? 'selected' : ''}>${label}</option>`);
+    }
+    return opts.join('');
+  }
+
+  function renderHourFilter(sym) {
+    const summary = GC.Store.getRangeSummary({
+      startDate: filterStartDate, endDate: filterEndDate,
+      startHour: filterStartHour, endHour: filterEndHour,
+      category: filterCategory,
+    });
+
+    // Quick presets for current state
+    const catPill = (key, label) =>
+      `<button class="cat-pill ${filterCategory === key ? 'active' : ''}" data-cat="${key}">${label}</button>`;
+
+    // Hourly bars: max revenue for scaling
+    const maxRev = Math.max(0.01, ...summary.hourly.map(h => h.revenue));
+    const bars = summary.hourly.map(h => `
+      <div class="hour-bar-row" title="${h.label}: ${sym}${h.revenue.toFixed(2)}">
+        <div class="hour-bar-label">${h.label}</div>
+        <div class="hour-bar-track">
+          <div class="hour-bar-fill" style="width:${(h.revenue / maxRev * 100).toFixed(1)}%"></div>
+        </div>
+        <div class="hour-bar-value">${sym}${h.revenue.toFixed(2)}</div>
+      </div>
+    `).join('');
+
+    return `
+      <div class="filter-panel">
+        <div class="filter-panel-header">
+          <h3 class="section-title" style="margin:0">⏰ 时段筛选 / Time-Range Filter</h3>
+          <small style="color:var(--text-muted)">营业时间 12:00 — 次日 01:00</small>
+        </div>
+
+        <div class="filter-controls">
+          <div class="filter-group">
+            <label class="form-label">起始日期 / Start Date</label>
+            <input type="date" id="flt-start-date" class="form-input" value="${filterStartDate}">
+          </div>
+          <div class="filter-group">
+            <label class="form-label">结束日期 / End Date</label>
+            <input type="date" id="flt-end-date" class="form-input" value="${filterEndDate}">
+          </div>
+          <div class="filter-group">
+            <label class="form-label">从几点 / From Hour</label>
+            <select id="flt-start-hour" class="form-input">${hourOptions(filterStartHour)}</select>
+          </div>
+          <div class="filter-group">
+            <label class="form-label">到几点 / To Hour</label>
+            <select id="flt-end-hour" class="form-input">${hourOptions(filterEndHour)}</select>
+          </div>
+        </div>
+
+        <div class="filter-cat-row">
+          <span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600">类型 / Type:</span>
+          ${catPill('all', '全部 / All')}
+          ${catPill('food', '🍴 餐饮 / F&B')}
+          ${catPill('gaming', '🎮 游戏 / Gaming')}
+        </div>
+
+        <div class="filter-result-card">
+          <div class="filter-result-tiles">
+            <div class="filter-result-tile">
+              <span class="filter-result-label">营业额 / Revenue</span>
+              <span class="filter-result-value">${sym}${summary.revenue.toFixed(2)}</span>
+            </div>
+            <div class="filter-result-tile">
+              <span class="filter-result-label">订单 / F&B Orders</span>
+              <span class="filter-result-value">${summary.orderCount}</span>
+            </div>
+            <div class="filter-result-tile">
+              <span class="filter-result-label">游戏台 / Sessions</span>
+              <span class="filter-result-value">${summary.sessionCount}</span>
+            </div>
+            <div class="filter-result-tile">
+              <span class="filter-result-label">餐饮 / F&B $</span>
+              <span class="filter-result-value">${sym}${summary.breakdown.food.toFixed(2)}</span>
+            </div>
+            <div class="filter-result-tile">
+              <span class="filter-result-label">游戏 / Gaming $</span>
+              <span class="filter-result-value">${sym}${summary.breakdown.gaming.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <h4 class="section-title" style="margin:18px 0 10px;font-size:0.9rem">按小时分布 / Hourly Breakdown</h4>
+          <div class="hour-bars">
+            ${bars || '<div class="filter-result-empty">所选时段没有订单 / No orders in selected range</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindHourFilterEvents() {
+    const startD = document.getElementById('flt-start-date');
+    const endD = document.getElementById('flt-end-date');
+    const startH = document.getElementById('flt-start-hour');
+    const endH = document.getElementById('flt-end-hour');
+    if (startD) startD.addEventListener('change', e => { filterStartDate = e.target.value; render(); });
+    if (endD) endD.addEventListener('change', e => { filterEndDate = e.target.value; render(); });
+    if (startH) startH.addEventListener('change', e => {
+      filterStartHour = parseInt(e.target.value);
+      if (filterEndHour <= filterStartHour) filterEndHour = Math.min(25, filterStartHour + 1);
+      render();
+    });
+    if (endH) endH.addEventListener('change', e => {
+      filterEndHour = parseInt(e.target.value);
+      if (filterEndHour <= filterStartHour) filterStartHour = Math.max(12, filterEndHour - 1);
+      render();
+    });
+    document.querySelectorAll('[data-cat]').forEach(b => {
+      b.addEventListener('click', () => { filterCategory = b.dataset.cat; render(); });
+    });
   }
 
   /* ---- Z-Report: Close Day modal ---- */

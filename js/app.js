@@ -147,13 +147,22 @@ window.GC = window.GC || {};
     if (booted) return;
     booted = true;
     try {
-      await GC.Store.init();
-      // Sync client clock with server once on boot; resync on tab refocus
-      await GC.Store.syncClock();
+      // HARD timeout: if Store.init() (9 parallel DB queries) hasn't completed
+      // in 10s, abort so the user is dropped back to login instead of staring
+      // at "登录中..." forever. Previous symptom: stuck login until manual refresh.
+      const initPromise = GC.Store.init();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Init timed out (10s) — slow network or DB')), 10000)
+      );
+      await Promise.race([initPromise, timeoutPromise]);
+
+      // syncClock is fire-and-forget — don't block boot on it
+      GC.Store.syncClock().catch(() => {});
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) GC.Store.syncClock();
+        if (!document.hidden) GC.Store.syncClock().catch(() => {});
       });
-      // Request browser notification permission ONCE on first user click (not on every warning)
+
+      // Notification permission requested on first click, not at boot
       if ('Notification' in window && Notification.permission === 'default') {
         const onceClick = () => {
           Notification.requestPermission().catch(() => {});
@@ -168,6 +177,13 @@ window.GC = window.GC || {};
       console.error('Boot failed:', e);
       booted = false;
       GC.Auth.renderLogin();
+      // Surface the failure to the user with a toast so they don't think it just hung silently.
+      // Wait a tick so the login form is in the DOM before the toast renders on top.
+      setTimeout(() => {
+        if (GC.toast) {
+          GC.toast(`登录后初始化失败 / Init failed: ${e.message}. 请重试。`, 'error');
+        }
+      }, 100);
     }
   }
 

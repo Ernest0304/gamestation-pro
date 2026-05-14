@@ -40,17 +40,46 @@ GC.Auth = (function () {
       btn.textContent = '登录中...';
       errorEl.style.display = 'none';
 
-      const { error } = await GC.supabase.auth.signInWithPassword({ email, password });
-
-      if (error) {
-        errorEl.textContent = error.message === 'Invalid login credentials'
-          ? '邮箱或密码错误' : error.message;
+      // Wrap signInWithPassword in a hard 8s timeout — if Supabase auth network
+      // request stalls (we've seen this in some preview environments / weak wifi),
+      // we want to re-enable the button so the user can retry instead of staring
+      // at "登录中..." forever.
+      let result;
+      try {
+        const authPromise = GC.supabase.auth.signInWithPassword({ email, password });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('登录请求超时 (8s) — 网络可能不稳定，请重试')), 8000)
+        );
+        result = await Promise.race([authPromise, timeoutPromise]);
+      } catch (e) {
+        errorEl.textContent = e.message;
         errorEl.style.display = 'block';
         btn.disabled = false;
         btn.textContent = '登录';
         return;
       }
-      // Auth state change listener in app.js handles the rest
+
+      if (result && result.error) {
+        errorEl.textContent = result.error.message === 'Invalid login credentials'
+          ? '邮箱或密码错误' : result.error.message;
+        errorEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '登录';
+        return;
+      }
+
+      // Auth succeeded. Add a safety net: if app.js bootApp doesn't render
+      // within 12 seconds, reset the button so user can retry.
+      setTimeout(() => {
+        const stillStuck = document.getElementById('login-btn');
+        if (stillStuck && stillStuck.textContent === '登录中...') {
+          stillStuck.disabled = false;
+          stillStuck.textContent = '登录';
+          errorEl.textContent = '登录成功但初始化卡住，请重试 / Init stuck, retry';
+          errorEl.style.display = 'block';
+        }
+      }, 12000);
+      // Auth state change listener in app.js handles the rest of the boot
     });
   }
 

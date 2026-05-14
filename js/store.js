@@ -29,7 +29,17 @@ GC.Store = (function () {
     orderItems: [],
     orderPayments: [],
     dailyCloses: [],
+    // Multi-branch (Migration 009, 2026-05-14)
+    branches: [],            // [{id, code, nameZh, nameEn, hasGaming, active, settings, ...}]
+    branchMenuPricing: [],   // [{branchId, menuItemId, price, available}]
+    staffBranches: [],       // [{userId, branchId, role}]
   };
+
+  // Current branch context. Owner can switch via UI; cashier locked to assignment.
+  // Persisted in localStorage so refresh doesn't reset.
+  const BRANCH_LS_KEY = 'yxd_current_branch_id';
+  let _currentBranchId = (typeof localStorage !== 'undefined')
+    ? localStorage.getItem(BRANCH_LS_KEY) : null;
 
   /* ========== Mappers ========== */
 
@@ -56,7 +66,10 @@ GC.Store = (function () {
   }
 
   function stationToApp(row) {
-    return { id: row.id, name: row.name, type: row.type, status: row.status };
+    return {
+      id: row.id, name: row.name, type: row.type, status: row.status,
+      branchId: row.branch_id || null,
+    };
   }
 
   function memberToApp(row) {
@@ -73,8 +86,40 @@ GC.Store = (function () {
       // IT S2-1: must surface archived_at so realtime UPDATE filter (archived members)
       // can detect when a member gets soft-deleted from another tab.
       archived_at: row.archived_at || null,
+      homeBranchId: row.home_branch_id || null,   // Migration 009
       createdAt: new Date(row.created_at).getTime(),
     };
+  }
+
+  /* ---- Multi-branch mappers (Migration 009) ---- */
+  function branchToApp(row) {
+    return {
+      id: row.id,
+      code: row.code,
+      nameZh: row.name_zh,
+      nameEn: row.name_en,
+      address: row.address || '',
+      phone: row.phone || '',
+      hasGaming: !!row.has_gaming,
+      printerCounterIp: row.printer_counter_ip || null,
+      printerKitchenIp: row.printer_kitchen_ip || null,
+      openingFloat: Number(row.opening_float || 0),
+      active: !!row.active,
+      settings: row.settings || {},
+      createdAt: new Date(row.created_at).getTime(),
+    };
+  }
+  function branchMenuPricingToApp(row) {
+    return {
+      branchId: row.branch_id,
+      menuItemId: row.menu_item_id,
+      price: row.price != null ? Number(row.price) : null,
+      available: row.available !== false,
+      updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : null,
+    };
+  }
+  function staffBranchToApp(row) {
+    return { userId: row.user_id, branchId: row.branch_id, role: row.role };
   }
 
   function sessionToApp(row) {
@@ -99,6 +144,7 @@ GC.Store = (function () {
       paymentMethod: row.payment_method || null,
       cashier: row.cashier || null,
       shortfall: Number(row.shortfall || 0),
+      branchId: row.branch_id || null,   // Migration 009
     };
   }
 
@@ -110,6 +156,7 @@ GC.Store = (function () {
       bonus: Number(row.bonus || 0),
       resultingBalance: Number(row.resulting_balance),
       reason: row.reason || null,
+      branchId: row.branch_id || null,   // Migration 009
       createdAt: new Date(row.created_at).getTime(),
     };
   }
@@ -160,6 +207,8 @@ GC.Store = (function () {
       takeawayCharge: Number(row.takeaway_charge || 0),
       extraCharges: Array.isArray(row.extra_charges) ? row.extra_charges : [],
       deliveryPlatformTotal: row.delivery_platform_total != null ? Number(row.delivery_platform_total) : null,
+      // Migration 009: branch_id
+      branchId: row.branch_id || null,
       createdAt: new Date(row.created_at).getTime(),
       completedAt: row.completed_at ? new Date(row.completed_at).getTime() : null,
     };
@@ -210,6 +259,7 @@ GC.Store = (function () {
       voidedOrders: Number(row.voided_orders || 0),
       note: row.note,
       snapshot: row.snapshot,
+      branchId: row.branch_id || null,   // Migration 009
     };
   }
 
@@ -235,6 +285,7 @@ GC.Store = (function () {
       settingsRes, stationsRes, membersRes, sessionsRes, topUpsRes,
       categoriesRes, menuItemsRes, ordersRes, orderItemsRes,
       orderPaymentsRes, dailyClosesRes,
+      branchesRes, branchMenuPricingRes, staffBranchesRes,
     ] = await Promise.all([
       sb.from('settings').select('*').single(),
       sb.from('stations').select('*').order('id'),
@@ -247,6 +298,10 @@ GC.Store = (function () {
       sb.from('order_items').select('*').limit(2000),
       sb.from('order_payments').select('*').order('created_at', { ascending: false }).limit(1000),
       sb.from('daily_closes').select('*').order('close_date', { ascending: false }).limit(60),
+      // Migration 009 — multi-branch
+      sb.from('branches').select('*').order('code'),
+      sb.from('branch_menu_pricing').select('*'),
+      sb.from('staff_branches').select('*'),
     ]);
 
     _cache.settings = settingsToApp(settingsRes.data);
@@ -260,6 +315,35 @@ GC.Store = (function () {
     _cache.orderItems = (orderItemsRes.data || []).map(orderItemToApp);
     _cache.orderPayments = (orderPaymentsRes.data || []).map(orderPaymentToApp);
     _cache.dailyCloses = (dailyClosesRes.data || []).map(dailyCloseToApp);
+    _cache.branches = (branchesRes.data || []).map(branchToApp);
+    _cache.branchMenuPricing = (branchMenuPricingRes.data || []).map(branchMenuPricingToApp);
+    _cache.staffBranches = (staffBranchesRes.data || []).map(staffBranchToApp);
+
+    // Default branch selection (Migration 009):
+    // 1. Honor localStorage if set AND user has access
+    // 2. Otherwise pick first branch user has staff_branches access to
+    // 3. Otherwise (no staff_branches row — pre-migration users) pick first ACTIVE branch
+    if (_cache.branches.length > 0) {
+      const myEmail = await getCurrentUserEmail();
+      const myUserId = (await sb.auth.getUser()).data?.user?.id || null;
+      const myAccessibleBranches = _cache.staffBranches
+        .filter(sb => sb.userId === myUserId)
+        .map(sb => sb.branchId);
+      const allowed = (id) =>
+        myAccessibleBranches.length === 0 || myAccessibleBranches.includes(id);
+
+      let chosen = null;
+      if (_currentBranchId && _cache.branches.some(b => b.id === _currentBranchId) && allowed(_currentBranchId)) {
+        chosen = _currentBranchId;
+      } else if (myAccessibleBranches.length > 0) {
+        chosen = myAccessibleBranches[0];
+      } else {
+        const firstActive = _cache.branches.find(b => b.active);
+        chosen = (firstActive || _cache.branches[0]).id;
+      }
+      _currentBranchId = chosen;
+      try { localStorage.setItem(BRANCH_LS_KEY, chosen); } catch (_) {}
+    }
 
     if (!_subscribed) {
       _subscribed = true;
@@ -300,7 +384,68 @@ GC.Store = (function () {
     _cache.menuItems = [];
     _cache.orders = [];
     _cache.orderItems = [];
+    _cache.orderPayments = [];
+    _cache.dailyCloses = [];
+    _cache.branches = [];
+    _cache.branchMenuPricing = [];
+    _cache.staffBranches = [];
+    // Note: we DO NOT clear _currentBranchId — preserve user's last selection
+    // across login sessions for same device.
   }
+
+  /* ========== Multi-branch helpers (Migration 009) ========== */
+  function getBranches() { return _cache.branches; }
+  function getActiveBranches() { return _cache.branches.filter(b => b.active); }
+  function getBranch(id) { return _cache.branches.find(b => b.id === id) || null; }
+  function getCurrentBranchId() { return _currentBranchId; }
+  function getCurrentBranch() { return getBranch(_currentBranchId); }
+  function setCurrentBranchId(id) {
+    if (!id) return;
+    if (!_cache.branches.some(b => b.id === id)) return;
+    _currentBranchId = id;
+    try { localStorage.setItem(BRANCH_LS_KEY, id); } catch (_) {}
+    // Broadcast so views can re-render
+    try { window.dispatchEvent(new CustomEvent('gc:branch-change', { detail: { branchId: id } })); } catch (_) {}
+  }
+  function getStaffBranches() { return _cache.staffBranches; }
+  async function getMyRole() {
+    const userId = (await sb.auth.getUser()).data?.user?.id || null;
+    if (!userId) return null;
+    const rows = _cache.staffBranches.filter(s => s.userId === userId);
+    if (rows.length === 0) return null;
+    // owner > manager > cashier
+    if (rows.some(r => r.role === 'owner')) return 'owner';
+    if (rows.some(r => r.role === 'manager')) return 'manager';
+    return 'cashier';
+  }
+  async function getMyAccessibleBranchIds() {
+    const userId = (await sb.auth.getUser()).data?.user?.id || null;
+    if (!userId) return [];
+    return _cache.staffBranches.filter(s => s.userId === userId).map(s => s.branchId);
+  }
+
+  /**
+   * Look up the effective price for a menu item at the current (or given) branch.
+   * Returns the branch override if available, else the master menu_items.price.
+   */
+  function getEffectiveMenuPrice(menuItemId, branchId) {
+    const bId = branchId || _currentBranchId;
+    if (bId) {
+      const override = _cache.branchMenuPricing.find(p => p.branchId === bId && p.menuItemId === menuItemId);
+      if (override && override.price != null) return Number(override.price);
+    }
+    const item = _cache.menuItems.find(m => m.id === menuItemId);
+    return item ? Number(item.price) : 0;
+  }
+  /** Is this menu item available at the current (or given) branch? */
+  function isMenuItemAvailable(menuItemId, branchId) {
+    const bId = branchId || _currentBranchId;
+    if (!bId) return true;
+    const override = _cache.branchMenuPricing.find(p => p.branchId === bId && p.menuItemId === menuItemId);
+    // Default = available. Only `available=false` hides.
+    return !override || override.available !== false;
+  }
+  function getBranchMenuPricing() { return _cache.branchMenuPricing; }
 
   /* ========== Realtime ========== */
 
@@ -392,10 +537,41 @@ GC.Store = (function () {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_closes' }, (payload) => {
         if (payload.new) {
           const c = dailyCloseToApp(payload.new);
-          _cache.dailyCloses = _cache.dailyCloses.filter(x => x.closeDate !== c.closeDate);
+          // Migration 009: dedupe by (branchId, closeDate)
+          _cache.dailyCloses = _cache.dailyCloses.filter(x =>
+            !(x.closeDate === c.closeDate && x.branchId === c.branchId)
+          );
           _cache.dailyCloses.unshift(c);
         }
         if (GC._currentView === 'history' && GC.History) GC.History.render();
+      })
+      // Multi-branch subscriptions (Migration 009)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, (payload) => {
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const b = branchToApp(payload.new);
+          if (!_cache.branches.find(x => x.id === b.id)) _cache.branches.push(b);
+        } else if (payload.eventType === 'UPDATE' && payload.new) {
+          const b = branchToApp(payload.new);
+          const i = _cache.branches.findIndex(x => x.id === b.id);
+          if (i >= 0) _cache.branches[i] = b; else _cache.branches.push(b);
+        } else if (payload.eventType === 'DELETE' && payload.old) {
+          _cache.branches = _cache.branches.filter(x => x.id !== payload.old.id);
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'branch_menu_pricing' }, (payload) => {
+        if (payload.eventType === 'DELETE' && payload.old) {
+          _cache.branchMenuPricing = _cache.branchMenuPricing.filter(p =>
+            !(p.branchId === payload.old.branch_id && p.menuItemId === payload.old.menu_item_id)
+          );
+        } else if (payload.new) {
+          const p = branchMenuPricingToApp(payload.new);
+          _cache.branchMenuPricing = _cache.branchMenuPricing.filter(x =>
+            !(x.branchId === p.branchId && x.menuItemId === p.menuItemId)
+          );
+          _cache.branchMenuPricing.push(p);
+        }
+        if (GC._currentView === 'pos' && GC.POS) GC.POS.render();
+        if (GC._currentView === 'menu' && GC.Menu) GC.Menu.render();
       })
       .subscribe();
   }
@@ -510,6 +686,11 @@ GC.Store = (function () {
     // Capture cashier identity (Finance + Ops critical). Falls back to auth user.
     const actor = cashier || (await getCurrentUserEmail());
 
+    // Migration 009 — sessions inherit the cashier's current branch.
+    // For gaming, branch is fixed (only Kallang has gaming). Geylang has no
+    // stations seeded so this path won't fire there.
+    const branchId = _currentBranchId;
+
     let row;
     if (isWalkIn) {
       const bill = computeWalkInBill(stationType, hours, start, null);
@@ -525,6 +706,7 @@ GC.Store = (function () {
         status: 'active',
         payment_method: paymentMethod || 'cash',  // walk-in is pre-paid — record method now
         cashier: actor,
+        branch_id: branchId,
       };
     } else {
       const { rate, regularRate } = getRateFor(stationType, memberId);
@@ -538,6 +720,7 @@ GC.Store = (function () {
         status: 'active',
         payment_method: 'member_balance',
         cashier: actor,
+        branch_id: branchId,
       };
     }
 
@@ -731,6 +914,7 @@ GC.Store = (function () {
         tier: 'regular',
         balance: 0,
         bind_code: generateBindCode(),
+        home_branch_id: _currentBranchId || null,   // Migration 009
       };
       const { data, error } = await sb.from('members').insert(row).select().single();
       if (!error) {
@@ -872,6 +1056,7 @@ GC.Store = (function () {
       amount, bonus,
       resulting_balance: newBalance,
       reason,
+      branch_id: _currentBranchId || null,   // Migration 009
     };
     const { data } = await sb.from('top_ups').insert(topUpRow).select().single();
     const topUp = topUpToApp(data);
@@ -1198,6 +1383,8 @@ GC.Store = (function () {
       takeaway_charge: takeawayAmt,
       extra_charges: cleanedExtras,
       delivery_platform_total: deliveryPlatformTotal != null ? round2(Number(deliveryPlatformTotal)) : null,
+      // Migration 009 field
+      branch_id: _currentBranchId,
     };
     const { data: orderData, error: orderErr } = await sb.from('orders').insert(orderRow).select().single();
     if (orderErr) throw orderErr;
@@ -1297,37 +1484,45 @@ GC.Store = (function () {
    * Returns { cash, paynow, memberBalance, card, totalDiscount, topUps,
    *           orderCount, sessionCount, voidedCount, byPayment[] }
    */
-  function getDailySummary(yyyymmdd) {
+  function getDailySummary(yyyymmdd, opts = {}) {
     // Singapore timezone is UTC+8 — pin window explicitly so a cashier on a
     // device with a different OS timezone (or near midnight UTC drift) still
     // gets the right Singapore business-day boundaries. (Finance P0-B 2026-05-14)
+    // Migration 009: scope by branch. opts.branchId='all' aggregates everything
+    // (used by /admin cross-branch view). Default = current branch.
     const day = yyyymmdd || (() => {
-      // Today in SGT
       const now = new Date();
       const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
       return sgt.toISOString().slice(0, 10);
     })();
     const start = new Date(day + 'T00:00:00+08:00').getTime();
     const end = start + 86400000;
+    const scopeBranchId = opts.branchId !== undefined ? opts.branchId : _currentBranchId;
+    const matchBranch = (row) => scopeBranchId === 'all' || row.branchId === scopeBranchId;
 
     const dayOrders = _cache.orders.filter(o =>
       o.status === 'completed' &&
       (o.completedAt || o.createdAt) >= start &&
-      (o.completedAt || o.createdAt) < end
+      (o.completedAt || o.createdAt) < end &&
+      matchBranch(o)
     );
     const orderIds = new Set(dayOrders.map(o => o.id));
     const dayPayments = _cache.orderPayments.filter(p => orderIds.has(p.orderId));
 
     const daySessions = _cache.sessions.filter(s =>
-      s.status === 'completed' && s.endTime && s.endTime >= start && s.endTime < end
+      s.status === 'completed' && s.endTime && s.endTime >= start && s.endTime < end &&
+      matchBranch(s)
     );
 
-    const dayTopUps = _cache.topUps.filter(t => t.createdAt >= start && t.createdAt < end);
+    const dayTopUps = _cache.topUps.filter(t =>
+      t.createdAt >= start && t.createdAt < end && matchBranch(t)
+    );
 
     const voided = _cache.orders.filter(o =>
       o.status === 'voided' &&
       (o.completedAt || o.createdAt) >= start &&
-      (o.completedAt || o.createdAt) < end
+      (o.completedAt || o.createdAt) < end &&
+      matchBranch(o)
     );
 
     // Aggregate by payment method (orders + sessions both contribute)
@@ -1412,12 +1607,15 @@ GC.Store = (function () {
     const endMs = sgtMs(endDate, endHour);
 
     const inRange = (ts) => ts >= startMs && ts < endMs;
+    // Migration 009: scope by branch. 'all' = aggregate everything.
+    const scopeBranchId = opts.branchId !== undefined ? opts.branchId : _currentBranchId;
+    const matchBranch = (row) => scopeBranchId === 'all' || row.branchId === scopeBranchId;
 
     const orders = (category === 'gaming') ? [] : _cache.orders.filter(o =>
-      o.status === 'completed' && inRange(o.completedAt || o.createdAt)
+      o.status === 'completed' && inRange(o.completedAt || o.createdAt) && matchBranch(o)
     );
     const sessions = (category === 'food') ? [] : _cache.sessions.filter(s =>
-      s.status === 'completed' && s.endTime && inRange(s.endTime)
+      s.status === 'completed' && s.endTime && inRange(s.endTime) && matchBranch(s)
     );
 
     const orderIds = new Set(orders.map(o => o.id));
@@ -1486,19 +1684,24 @@ GC.Store = (function () {
    *   physically holds that money (top-ups are paid in cash at counter).
    */
   async function closeDay(yyyymmdd, actualCash, note) {
-    // Guard: existing close (use server-side check to defeat stale cache).
+    const branchId = _currentBranchId;
+    if (!branchId) throw new Error('未选择分店 / No branch selected');
+
+    // Guard: existing close PER BRANCH (Migration 009 — unique constraint
+    // is now (branch_id, close_date), so two branches can close same date).
     const { data: existing, error: existingErr } = await sb
       .from('daily_closes')
       .select('close_date, closed_by, closed_at')
       .eq('close_date', yyyymmdd)
+      .eq('branch_id', branchId)
       .maybeSingle();
     if (existingErr) throw existingErr;
     if (existing) {
       throw new Error(`此日期已结账 (by ${existing.closed_by || 'unknown'}). 如需修改请联系管理员撤销原记录.`);
     }
 
-    // Guard: no active sessions allowed.
-    const activeSessions = _cache.sessions.filter(s => s.status === 'active');
+    // Guard: no active sessions in THIS BRANCH allowed.
+    const activeSessions = _cache.sessions.filter(s => s.status === 'active' && s.branchId === branchId);
     if (activeSessions.length > 0) {
       const stationLabels = activeSessions.map(s => s.stationName || s.stationId).join(', ');
       throw new Error(
@@ -1524,10 +1727,8 @@ GC.Store = (function () {
       voided_orders: summary.voidedCount,
       note: note || null,
       snapshot: summary,
+      branch_id: branchId,   // Migration 009
     };
-    // INSERT (not upsert) — overwrite protection is enforced above; using
-    // insert here means a race between two cashiers will fail at the unique
-    // index instead of silently clobbering.
     const { data, error } = await sb.from('daily_closes').insert(row).select().single();
     if (error) {
       if (error.code === '23505') {
@@ -1536,15 +1737,15 @@ GC.Store = (function () {
       throw error;
     }
     const close = dailyCloseToApp(data);
-    // Update cache (replace existing entry for this date if any)
-    _cache.dailyCloses = _cache.dailyCloses.filter(c => c.closeDate !== yyyymmdd);
+    _cache.dailyCloses = _cache.dailyCloses
+      .filter(c => !(c.closeDate === yyyymmdd && c.branchId === branchId));
     _cache.dailyCloses.unshift(close);
-    // Audit log
     await sb.from('audit_log').insert({
       action: 'daily_close',
       actor_email: actor,
       before_state: summary,
       after_state: { actual_cash: actualCash, difference: row.cash_difference, note },
+      branch_id: branchId,
     });
     return close;
   }
@@ -1699,5 +1900,10 @@ GC.Store = (function () {
     saveSettings, togglePromo, clearSessions, resetAll,
     // Export
     exportData, importData,
+    // Multi-branch (Migration 009)
+    getBranches, getActiveBranches, getBranch,
+    getCurrentBranchId, getCurrentBranch, setCurrentBranchId,
+    getStaffBranches, getMyRole, getMyAccessibleBranchIds,
+    getEffectiveMenuPrice, isMenuItemAvailable, getBranchMenuPricing,
   };
 })();

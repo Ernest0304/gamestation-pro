@@ -97,6 +97,84 @@ body.pos-mode .nav-brand-en { color: #92775a; }
 }
 .nav-link.active .nav-en { color: var(--cyan); opacity: 0.7; }
 
+/* ===== Branch switcher chip (Migration 009 / Wave C.1) ===== */
+.branch-switcher {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: rgba(6, 182, 212, 0.1);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  border-radius: 999px;
+  font-size: 0.82rem; font-weight: 600;
+  color: var(--cyan);
+  white-space: nowrap;
+  margin: 0 8px;
+  transition: all 0.15s;
+}
+.branch-switcher.clickable { cursor: pointer; }
+.branch-switcher.clickable:hover {
+  background: rgba(6, 182, 212, 0.18);
+  border-color: var(--cyan);
+}
+.branch-switcher .branch-icon { font-size: 0.95rem; }
+.branch-switcher .branch-name { color: var(--cyan); }
+.branch-switcher .branch-caret { font-size: 0.7rem; opacity: 0.7; }
+.branch-switcher .branch-locked { font-size: 0.7rem; opacity: 0.5; }
+.branch-switcher .branch-inactive-tag {
+  margin-left: 4px;
+  background: var(--amber); color: white;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 0.65rem;
+}
+body.pos-mode .branch-switcher {
+  background: rgba(122, 8, 24, 0.08);
+  border-color: rgba(122, 8, 24, 0.25);
+  color: #7a0818;
+}
+body.pos-mode .branch-switcher .branch-name { color: #7a0818; }
+
+/* Branch picker modal */
+.branch-pick-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.branch-pick-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+  text-align: left;
+}
+.branch-pick-item:hover {
+  border-color: var(--cyan);
+  background: rgba(6, 182, 212, 0.06);
+}
+.branch-pick-item.current {
+  border-color: var(--cyan);
+  background: rgba(6, 182, 212, 0.1);
+}
+.branch-pick-item.inactive { opacity: 0.55; }
+.branch-pick-main {
+  display: flex; align-items: center; gap: 12px;
+}
+.branch-pick-icon { font-size: 1.4rem; }
+.branch-pick-name-zh {
+  font-size: 1rem; font-weight: 700; color: var(--text-primary);
+}
+.branch-pick-name-en {
+  font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;
+}
+.branch-pick-tags { display: flex; gap: 4px; }
+.branch-pick-tag {
+  padding: 3px 8px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600;
+  background: var(--bg-card); color: var(--text-secondary);
+}
+.branch-pick-tag.gaming { background: rgba(59,130,246,0.15); color: var(--blue); }
+.branch-pick-tag.inactive { background: rgba(245,158,11,0.18); color: var(--amber); }
+.branch-pick-tag.current { background: var(--cyan); color: white; }
+
 /* ===== Main content ===== */
 .main-content {
   margin-top: 64px;

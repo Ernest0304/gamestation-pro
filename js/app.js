@@ -140,6 +140,107 @@ window.GC = window.GC || {};
     });
   }
 
+  /* ---- Branch switcher (Migration 009, Wave C.1) ----
+     Injects a chip into the navbar showing the current branch. Owner can
+     click to switch; cashier sees their branch locked. Re-renders the
+     current view on switch so menu/orders/etc. reflect the new branch.
+  */
+  async function renderBranchSwitcher() {
+    const navbar = document.querySelector('.navbar');
+    if (!navbar) return;
+
+    let existing = document.getElementById('branch-switcher');
+    if (existing) existing.remove();
+
+    const branches = GC.Store.getBranches();
+    if (!branches || branches.length === 0) return;
+
+    const myRole = await GC.Store.getMyRole();
+    const myAccessibleIds = await GC.Store.getMyAccessibleBranchIds();
+    const isOwner = myRole === 'owner';
+    // Cashier/manager can only switch among their assigned branches; owner sees all
+    const switchable = isOwner ? branches : branches.filter(b => myAccessibleIds.includes(b.id));
+    const canSwitch = switchable.length > 1;
+    const current = GC.Store.getCurrentBranch();
+    if (!current) return;
+
+    const chip = document.createElement('div');
+    chip.id = 'branch-switcher';
+    chip.className = 'branch-switcher' + (canSwitch ? ' clickable' : '');
+    chip.innerHTML = `
+      <span class="branch-icon">🏪</span>
+      <span class="branch-name">${GC.esc ? GC.esc(current.nameZh) : current.nameZh}</span>
+      ${canSwitch ? '<span class="branch-caret">▾</span>' : '<span class="branch-locked">🔒</span>'}
+      ${!current.active ? '<span class="branch-inactive-tag">未启用</span>' : ''}
+    `;
+
+    // Insert AFTER nav-brand, BEFORE nav-links
+    const brand = navbar.querySelector('.nav-brand');
+    if (brand && brand.nextSibling) brand.parentNode.insertBefore(chip, brand.nextSibling);
+    else navbar.appendChild(chip);
+
+    if (canSwitch) {
+      chip.addEventListener('click', () => showBranchPicker(switchable, current.id));
+    }
+  }
+
+  function showBranchPicker(branches, currentId) {
+    const modal = document.getElementById('modal');
+    const items = branches.map(b => `
+      <button class="branch-pick-item ${b.id === currentId ? 'current' : ''} ${!b.active ? 'inactive' : ''}"
+              data-branch="${b.id}">
+        <div class="branch-pick-main">
+          <span class="branch-pick-icon">🏪</span>
+          <div>
+            <div class="branch-pick-name-zh">${GC.esc(b.nameZh)}</div>
+            <div class="branch-pick-name-en">${GC.esc(b.nameEn)}${b.address ? ' · ' + GC.esc(b.address) : ''}</div>
+          </div>
+        </div>
+        <div class="branch-pick-tags">
+          ${b.hasGaming ? '<span class="branch-pick-tag gaming">🎮</span>' : ''}
+          ${!b.active ? '<span class="branch-pick-tag inactive">未启用</span>' : ''}
+          ${b.id === currentId ? '<span class="branch-pick-tag current">当前</span>' : ''}
+        </div>
+      </button>
+    `).join('');
+
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>🏪 选择分店 / Switch Branch</h3>
+            <button class="modal-close" id="bp-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="branch-pick-list">${items}</div>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('bp-close').onclick = close;
+    modal.querySelectorAll('[data-branch]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.branch;
+        if (id !== currentId) {
+          GC.Store.setCurrentBranchId(id);
+          // Re-render switcher chip + current view
+          renderBranchSwitcher();
+          if (GC._currentView && views[GC._currentView]) views[GC._currentView].render();
+          if (GC.toast) GC.toast('已切换分店 / Branch switched', 'success');
+        }
+        close();
+      });
+    });
+  }
+
+  // Listen for programmatic branch changes (from /admin or hotkey)
+  window.addEventListener('gc:branch-change', () => {
+    renderBranchSwitcher();
+    if (GC._currentView && views[GC._currentView]) views[GC._currentView].render();
+  });
+
   /* ---- App boot ---- */
   let booted = false;
 
@@ -172,6 +273,7 @@ window.GC = window.GC || {};
       }
       GC.Auth.showNavbar();
       bindNav();
+      renderBranchSwitcher();
       navigate('pos');
     } catch (e) {
       console.error('Boot failed:', e);
@@ -192,6 +294,8 @@ window.GC = window.GC || {};
     GC._currentView = null;
     const logoutBtn = document.getElementById('logout-btn');
     if (logoutBtn) logoutBtn.remove();
+    const branchChip = document.getElementById('branch-switcher');
+    if (branchChip) branchChip.remove();
     GC.Auth.renderLogin();
   }
 

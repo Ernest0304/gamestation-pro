@@ -1,8 +1,102 @@
 /* ============================================================
    POS — Sample B "Boutique Cafe" theme
-   Scoped to .pos-view so the rest of the app keeps dark gaming theme.
+   When body.pos-mode is active, the WHOLE page becomes light (整页亮色).
+   When user navigates away (Gaming/Members/etc), body.pos-mode is removed
+   and dark theme returns.
    ============================================================ */
 
+/* ===== Full-page light mode (only when body.pos-mode) ===== */
+body.pos-mode {
+  background: #faf5ee;
+  background-image:
+    radial-gradient(ellipse at top right, rgba(245,158,11,0.08), transparent 50%),
+    radial-gradient(ellipse at bottom left, rgba(180,83,9,0.04), transparent 50%);
+  color: #2a1f17;
+  transition: background-color 0.3s ease;
+}
+
+body.pos-mode .navbar {
+  background: rgba(255,251,243,0.85);
+  border-bottom: 1px solid #f0d9b8;
+  backdrop-filter: blur(16px);
+}
+body.pos-mode .nav-brand {
+  color: #78350f;
+}
+body.pos-mode .nav-brand .brand-accent {
+  color: #d97706;
+}
+body.pos-mode .nav-brand svg {
+  color: #d97706;
+}
+body.pos-mode .nav-link {
+  color: #92775a;
+}
+body.pos-mode .nav-link:hover {
+  color: #78350f;
+  background: rgba(245,158,11,0.08);
+}
+body.pos-mode .nav-link.active {
+  color: #78350f;
+  background: rgba(245,158,11,0.15);
+}
+body.pos-mode .nav-cn { color: inherit; }
+body.pos-mode .nav-en { color: rgba(146,119,90,0.7); }
+body.pos-mode .nav-link.active .nav-en { color: rgba(120,53,15,0.7); }
+
+body.pos-mode #logout-btn {
+  color: #92775a;
+  border: 1px solid #f0d9b8;
+  background: transparent;
+}
+body.pos-mode #logout-btn:hover {
+  color: #b91c1c;
+  background: rgba(185,28,28,0.06);
+  border-color: rgba(185,28,28,0.3);
+}
+
+/* Main content area when in POS mode: remove dark assumptions */
+body.pos-mode .main-content {
+  background: transparent;
+}
+
+/* Toast still readable on light bg */
+body.pos-mode .toast {
+  background: #fff;
+  border-color: #f0d9b8;
+  color: #2a1f17;
+  box-shadow: 0 8px 24px rgba(120,53,15,0.15);
+}
+
+/* Modal inside POS mode also light */
+body.pos-mode .modal-content {
+  background: #fff;
+  color: #2a1f17;
+  border-color: #f0d9b8;
+}
+body.pos-mode .modal-header,
+body.pos-mode .modal-footer {
+  border-color: #f5e6d3;
+}
+body.pos-mode .modal-header h3 { color: #2a1f17; }
+body.pos-mode .form-input {
+  background: #fef9f0;
+  border-color: #f0d9b8;
+  color: #2a1f17;
+}
+body.pos-mode .form-input:focus { border-color: #d97706; }
+body.pos-mode .form-input::placeholder { color: #92775a; }
+body.pos-mode .form-label { color: #6b5840; }
+
+/* Mobile: nav at bottom — keep light styling */
+@media (max-width: 640px) {
+  body.pos-mode .navbar {
+    border-top: 1px solid #f0d9b8;
+    border-bottom: none;
+  }
+}
+
+/* ===== POS view content (was already scoped) ===== */
 .pos-view {
   --pos-bg: #faf5ee;
   --pos-bg-2: #fef9f0;

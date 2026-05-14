@@ -48,6 +48,8 @@ window.GC = window.GC || {};
     document.querySelectorAll('.nav-link').forEach(l => {
       l.classList.toggle('active', l.dataset.view === name);
     });
+    // Toggle full-page light theme when on POS (per owner: 整页亮色一体感)
+    document.body.classList.toggle('pos-mode', name === 'pos');
     if (views[name]) views[name].render();
   }
 

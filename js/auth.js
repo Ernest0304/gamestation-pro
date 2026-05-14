@@ -11,8 +11,7 @@ GC.Auth = (function () {
       <div class="login-page">
         <div class="login-card">
           <div class="login-brand">
-            <img src="/img/logo.svg" alt="郁香潭" style="width:100px;height:100px;margin-bottom:8px;filter:drop-shadow(0 4px 12px rgba(122,8,24,0.3))">
-            <h1>郁香潭 · <span class="brand-accent">Yuu Xiang Dam</span></h1>
+            <img src="/img/logo.svg" alt="郁香潭 Yuu Xiang Dam" style="width:120px;height:120px;margin-bottom:6px;filter:drop-shadow(0 4px 12px rgba(122,8,24,0.3))">
             <p class="login-subtitle">点单 · 收银 · 游戏台 计费系统</p>
           </div>
           <form id="login-form">

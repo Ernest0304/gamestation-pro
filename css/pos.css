@@ -20,14 +20,13 @@ body.pos-mode .navbar {
   border-bottom: 1px solid #f0d9b8;
   backdrop-filter: blur(16px);
 }
-body.pos-mode .nav-brand {
-  color: #78350f;
-}
-body.pos-mode .nav-brand .brand-accent {
-  color: #d97706;
-}
-body.pos-mode .nav-brand svg {
-  color: #d97706;
+/* Logo: on cream POS background, add subtle outer ring so the white edge of
+   the SVG doesn't blend into the navbar. */
+body.pos-mode .nav-logo {
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(122, 8, 24, 0.18),
+              0 2px 8px rgba(122, 8, 24, 0.15);
+  filter: none;  /* drop the dark-mode shadow */
 }
 body.pos-mode .nav-link {
   color: #92775a;

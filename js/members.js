@@ -211,10 +211,19 @@ GC.Members = (function () {
       GC.toast('已生成新绑定码 / New code generated', 'success');
     });
     document.getElementById('del-member').addEventListener('click', async () => {
-      if (confirm(`确定删除会员 "${m.name}"？/ Delete this member?`)) {
-        await GC.Store.deleteMember(id);
+      const sym = settings.currencySymbol;
+      let warning = `确定删除会员 "${m.name}"？\nDelete this member?`;
+      if (m.balance > 0) {
+        warning += `\n\n⚠️  当前余额 / Balance: ${sym}${m.balance.toFixed(2)} 必须先退款或扣零。\nMust refund or zero out balance first.`;
+      }
+      if (!confirm(warning)) return;
+      try {
+        // soft-delete (archive) — preserves member history per owner policy
+        await GC.Store.deleteMember(id, { reason: prompt('删除原因 / Reason (optional):') || 'manual' });
         renderList();
-        GC.toast('已删除 / Deleted', 'success');
+        GC.toast('已存档 / Archived', 'success');
+      } catch (e) {
+        GC.toast(e.message, 'error');
       }
     });
   }
@@ -266,19 +275,27 @@ GC.Members = (function () {
       const tier = document.getElementById('inp-tier').value;
       if (!name) { alert('请输入姓名 / Name required'); return; }
 
-      let initialBalance = 0;
-      if (tier === 'silver') initialBalance = settings.memberFees.silver;
-      else if (tier === 'platinum') initialBalance = settings.memberFees.platinum + settings.platinumTopupBonus;
+      const okBtn = document.getElementById('m-ok');
+      okBtn.disabled = true; // debounce
+      try {
+        // Always create as regular with balance=0 (single source of truth).
+        // applyTopUp handles balance + tier promotion + audit log.
+        const m = await GC.Store.addMember({ name, phone });
 
-      const m = await GC.Store.addMember({ name, phone, tier, initialBalance });
-
-      // Log top-up if not regular
-      if (tier !== 'regular') {
-        await GC.Store.applyTopUp(m.id, tier === 'silver' ? settings.memberFees.silver : settings.memberFees.platinum);
+        if (tier === 'silver') {
+          await GC.Store.applyTopUp(m.id, settings.memberFees.silver);
+        } else if (tier === 'platinum') {
+          await GC.Store.applyTopUp(m.id, settings.memberFees.platinum);
+        }
+        // Re-read updated member from cache
+        const final = GC.Store.getMember(m.id) || m;
+        close();
+        renderList();
+        GC.toast(`会员已添加 · 绑定码 ${final.bindCode}`, 'success');
+      } catch (e) {
+        GC.toast('添加失败 / Failed: ' + e.message, 'error');
+        okBtn.disabled = false;
       }
-      close();
-      renderList();
-      GC.toast(`会员已添加 · 绑定码 ${m.bindCode}`, 'success');
     };
   }
 

@@ -479,7 +479,21 @@ select.form-input { appearance: none; cursor: pointer;
   color: var(--cyan); letter-spacing: 0.04em;
 }
 .player-row.player-warn .player-timer { color: var(--amber); }
-.player-row.player-over .player-timer { color: var(--red); }
+.player-row.player-over .player-timer { color: var(--red); font-size: 1.3rem; }
+.player-timer.over {
+  color: var(--red);
+  animation: time-up-blink 0.8s ease-in-out infinite;
+}
+@keyframes time-up-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+/* Big visible "Time Up" warning tag */
+.player-row.player-over .warning-tag {
+  font-size: 0.85rem;
+  padding: 4px 12px;
+  font-weight: 700;
+}
 .player-cost {
   font-family: var(--mono); font-size: 0.85rem; font-weight: 600;
   color: var(--green);
@@ -487,10 +501,10 @@ select.form-input { appearance: none; cursor: pointer;
 
 .player-actions { display: flex; gap: 4px; }
 .btn-icon {
-  width: 32px; height: 32px; border-radius: 8px;
+  width: 44px; height: 44px; border-radius: 10px;
   background: var(--bg-card); color: var(--text-secondary);
   border: 1px solid var(--border-light);
-  font-size: 0.8rem; font-weight: 600;
+  font-size: 0.9rem; font-weight: 600;
   display: inline-flex; align-items: center; justify-content: center;
   transition: all 0.15s; cursor: pointer;
 }

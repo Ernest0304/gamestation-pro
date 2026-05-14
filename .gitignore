@@ -4,4 +4,7 @@ node_modules/
 .env
 .env.local
 scripts/.db_password
+scripts/backup/output/
+scripts/backup/sync_state.json
+service-account-key.json
 

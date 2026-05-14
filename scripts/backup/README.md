@@ -1,0 +1,80 @@
+# YXD Backup System
+
+Two layers of backup to satisfy the owner's policy:
+
+> **会员信息一定要有备份并且需要一直保存在机子内，不能消失，除非我们自己删除**
+> **备份至少 1 个月前，自动上传到 Drive，能用软件或任何方式打开来查询**
+
+## Layer 1 · Daily JSON snapshot to Google Drive (this folder)
+
+`daily_backup.py` runs once a day (via GitHub Actions) and:
+
+1. Connects to Supabase via Session Pooler (uses `.env`'s `SUPABASE_DB_PASSWORD`).
+2. Exports every table to a single `yxd_full_YYYY-MM-DD.json` file.
+3. Exports a separate `yxd_members_only_YYYY-MM-DD.json` (members + top_ups).
+4. Uploads both to a Drive folder.
+5. Deletes local files older than 35 days — **but never deletes `members_only_*`** (kept forever).
+
+### Setup
+
+```bash
+pip3 install google-api-python-client google-auth psycopg2-binary
+```
+
+Create a Google service account, give it editor access to a Drive folder, then set:
+
+```bash
+export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
+export YXD_BACKUP_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv   # the Drive folder ID
+```
+
+Or in GitHub Actions, set `GOOGLE_SERVICE_ACCOUNT_KEY` and `YXD_BACKUP_FOLDER_ID` as repository secrets.
+
+Run manually:
+```bash
+python3 scripts/backup/daily_backup.py            # today
+python3 scripts/backup/daily_backup.py 2026-05-13 # specific date
+```
+
+### What it produces
+
+```
+/YXD-Backups/ (Drive folder)
+  yxd_full_2026-05-14.json          ← retained 35 days then auto-deleted
+  yxd_members_only_2026-05-14.json  ← retained forever (manual delete only)
+  yxd_full_2026-05-13.json
+  yxd_members_only_2026-05-13.json
+  ...
+```
+
+Each JSON is readable in any text editor, parseable by Excel/Sheets/Python/anything.
+
+## Layer 2 · Real-time sync to Google Sheets (TODO — next iteration)
+
+`sheets_sync.py` is scaffolded. The plan:
+
+1. Set up Supabase **Database Webhooks** (Dashboard → Database → Webhooks):
+   - On `INSERT` to `sessions` / `orders` / `top_ups`: POST to Apps Script web app URL
+   - On `INSERT/UPDATE` to `members`: POST to Apps Script web app URL
+2. Apps Script web app receives the payload and appends to a monthly sheet:
+   - `YXD POS - Members Master` (always up to date — every member, including archived)
+   - `YXD POS - Sessions 2026-05` (a new sheet each month)
+   - `YXD POS - Orders 2026-05`
+   - `YXD POS - TopUps 2026-05`
+   - `YXD POS - Daily Summary` (one row per day)
+
+This gives staff/accountant instant access via any device. Postponed to next sprint.
+
+## Manual restore (if Supabase ever fails)
+
+1. Spin up a fresh Supabase project.
+2. Run all `migrations/*.sql` in order.
+3. Use `restore.py` (TODO) — for now, a Python REPL one-liner:
+
+```python
+import json, psycopg2
+data = json.load(open('yxd_full_2026-05-14.json'))
+# … INSERT each table's rows
+```
+
+The members JSON alone is enough to reconstruct member accounts and balances at the snapshot moment.

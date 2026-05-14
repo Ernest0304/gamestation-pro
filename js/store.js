@@ -187,7 +187,7 @@ GC.Store = (function () {
     ] = await Promise.all([
       sb.from('settings').select('*').single(),
       sb.from('stations').select('*').order('id'),
-      sb.from('members').select('*').order('created_at'),
+      sb.from('members').select('*').is('archived_at', null).order('created_at'),
       sb.from('sessions').select('*').order('created_at', { ascending: false }),
       sb.from('top_ups').select('*').order('created_at', { ascending: false }),
       sb.from('menu_categories').select('*').order('display_order'),
@@ -234,8 +234,42 @@ GC.Store = (function () {
           if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
         }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'members' }, (payload) => {
+        // Critical: balance can change from any device (POS food order, gaming close, top-up).
+        // Subscribe so this cache stays current and no cashier sees stale balance.
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const m = memberToApp(payload.new);
+          if (!_cache.members.find(x => x.id === m.id)) _cache.members.push(m);
+        } else if (payload.eventType === 'UPDATE' && payload.new) {
+          const m = memberToApp(payload.new);
+          const i = _cache.members.findIndex(x => x.id === m.id);
+          if (i >= 0) _cache.members[i] = m;
+          // Member archived (soft-delete) — hide from active cache
+          if (m.archived_at) _cache.members = _cache.members.filter(x => x.id !== m.id);
+        } else if (payload.eventType === 'DELETE' && payload.old) {
+          _cache.members = _cache.members.filter(x => x.id !== payload.old.id);
+        }
+        // Re-render member-aware views
+        if (GC._currentView === 'members' && GC.Members) GC.Members.render();
+        if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
+      })
       .subscribe();
   }
+
+  /* ========== Server clock sync (anti-drift) ========== */
+  let _clockOffset = 0;
+
+  async function syncClock() {
+    try {
+      const { data, error } = await sb.rpc('server_now');
+      if (error || data == null) return;
+      _clockOffset = Number(data) - Date.now();
+    } catch (e) {
+      console.warn('Clock sync failed:', e);
+    }
+  }
+
+  function now() { return Date.now() + _clockOffset; }
 
   /* ========== Sync Reads ========== */
 
@@ -372,30 +406,52 @@ GC.Store = (function () {
   }
 
   /**
-   * Extend a walk-in player by N hours. Charges another paid block.
+   * Extend a walk-in player by N hours. Charges only the NEW block at CURRENT rate.
+   * IMPORTANT: existing paid time is NOT re-priced. If promo flipped mid-session, the
+   * already-paid blocks keep their original price (prevents undercharge/overcharge of paid time).
    */
   async function extendWalkIn(sessionId, extraHours) {
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session || session.status !== 'active' || session.memberId) return null;
-    const settings = _cache.settings;
-    const { rate, regularRate } = getRateFor(session.stationType, null);
-    const newPaidMinutes = (session.paidMinutes || 0) + extraHours * 60;
+    const { rate: currentRate, regularRate: currentRegularRate } = getRateFor(session.stationType, null);
+
+    const extraMinutes = extraHours * 60;
+    const extraCost = round2(extraHours * currentRate);
+    const extraSubtotal = round2(extraHours * currentRegularRate);
+    const extraDiscount = round2(extraSubtotal - extraCost);
+
+    const newPaidMinutes = (session.paidMinutes || 0) + extraMinutes;
     const newExpectedEnd = session.startTime + newPaidMinutes * 60000;
-    const newSubtotal = (newPaidMinutes / 60) * regularRate;
-    const newTotal = (newPaidMinutes / 60) * rate;
-    const newDiscount = newSubtotal - newTotal;
+    const newTotal = round2(session.total + extraCost);
+    const newSubtotal = round2(session.subtotal + extraSubtotal);
+    const newDiscount = round2(session.discount + extraDiscount);
+
+    // Use blended discount % for display only (informational)
+    const displayDiscountPct = newSubtotal > 0
+      ? Math.round((newDiscount / newSubtotal) * 100)
+      : 0;
 
     const patch = {
       paid_minutes: newPaidMinutes,
       expected_end_time: newExpectedEnd,
       duration_minutes: newPaidMinutes,
-      rate,
-      subtotal: round2(newSubtotal),
-      discount: round2(newDiscount),
-      total: round2(newTotal),
+      // rate stays at the LATEST extension rate for display; total is the truthful sum
+      rate: currentRate,
+      subtotal: newSubtotal,
+      discount: newDiscount,
+      discount_percent: displayDiscountPct,
+      total: newTotal,
     };
-    const { data } = await sb.from('sessions').update(patch).eq('id', sessionId).select().single();
-    const updated = sessionToApp(data);
+
+    // Atomic update with status check — refuse to write to a completed session
+    const { data, error } = await sb.from('sessions')
+      .update(patch)
+      .eq('id', sessionId)
+      .eq('status', 'active')
+      .select();
+    if (error) throw error;
+    if (!data || data.length === 0) throw new Error('会话已结束或不存在 / Session not active');
+    const updated = sessionToApp(data[0]);
     const i = _cache.sessions.findIndex(s => s.id === sessionId);
     if (i >= 0) _cache.sessions[i] = updated;
     return updated;
@@ -442,13 +498,21 @@ GC.Store = (function () {
     const i = _cache.sessions.findIndex(s => s.id === sessionId);
     if (i >= 0) _cache.sessions[i] = updated;
 
-    // Deduct member balance + update stats
+    // Deduct member balance atomically (race-free) + update stats
     if (session.memberId) {
       const m = getMember(session.memberId);
       if (m) {
-        const newBalance = Math.max(0, m.balance - updated.total);
+        const charge = await chargeBalance(session.memberId, -updated.total, `session_${session.stationName}`);
+        if (charge.shortfall > 0) {
+          // Balance ran out mid-session — record as cash-due (uncovered)
+          await sb.from('audit_log').insert({
+            action: 'session_shortfall',
+            before_state: { session_id: session.id, member_id: session.memberId, balance_before: m.balance },
+            after_state: { total_due: updated.total, shortfall: charge.shortfall },
+            note: 'Member balance insufficient — cashier should collect difference',
+          });
+        }
         await updateMember(session.memberId, {
-          balance: newBalance,
           totalSpent: m.totalSpent + updated.total,
           totalMinutes: m.totalMinutes + updated.durationMinutes,
         });
@@ -468,30 +532,50 @@ GC.Store = (function () {
 
   /* ========== Members ========== */
 
-  async function addMember({ name, phone, tier, initialBalance }) {
-    const bindCode = generateBindCode();
-    const row = {
-      name, phone: phone || '',
-      tier: tier || 'regular',
-      balance: initialBalance || 0,
-      bind_code: bindCode,
-    };
-    const { data, error } = await sb.from('members').insert(row).select().single();
-    if (error) throw error;
-    const m = memberToApp(data);
-    _cache.members.push(m);
-    return m;
+  /**
+   * Create a member with balance=0 and tier='regular'.
+   * Tier promotion + balance MUST be done via applyTopUp() — single source of truth
+   * prevents double-credit. (Was a bug: addMember + applyTopUp = balance counted twice.)
+   * Retries on bind_code collision (1 in 32^8 chance but possible).
+   */
+  async function addMember({ name, phone }) {
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = {
+        name, phone: phone || '',
+        tier: 'regular',
+        balance: 0,
+        bind_code: generateBindCode(),
+      };
+      const { data, error } = await sb.from('members').insert(row).select().single();
+      if (!error) {
+        const m = memberToApp(data);
+        _cache.members.push(m);
+        return m;
+      }
+      lastErr = error;
+      if (error.code !== '23505') break; // not a unique violation
+    }
+    throw lastErr || new Error('Failed to create member');
   }
 
+  /**
+   * Update non-balance member fields (name, phone, tier, totalSpent, totalMinutes, telegram_id, bind_code).
+   * For BALANCE changes use chargeBalance() — race-free via Postgres RPC.
+   * The 'balance' key here is IGNORED (write blocked to prevent accidental lost-update).
+   */
   async function updateMember(id, patch) {
     const idx = _cache.members.findIndex(m => m.id === id);
     if (idx < 0) return null;
+    if ('balance' in patch) {
+      console.warn('updateMember: balance writes blocked. Use chargeBalance(id, delta, reason).');
+      delete patch.balance;
+    }
     const updated = { ..._cache.members[idx], ...patch };
     const dbPatch = {};
     if ('name' in patch) dbPatch.name = patch.name;
     if ('phone' in patch) dbPatch.phone = patch.phone;
     if ('tier' in patch) dbPatch.tier = patch.tier;
-    if ('balance' in patch) dbPatch.balance = patch.balance;
     if ('totalSpent' in patch) dbPatch.total_spent = updated.totalSpent;
     if ('totalMinutes' in patch) dbPatch.total_minutes = updated.totalMinutes;
     if ('telegramId' in patch) dbPatch.telegram_id = patch.telegramId;
@@ -505,9 +589,58 @@ GC.Store = (function () {
     return updated;
   }
 
-  async function deleteMember(id) {
-    await sb.from('members').delete().eq('id', id);
-    _cache.members = _cache.members.filter(m => m.id !== id);
+  /**
+   * Atomically apply a balance delta via Postgres RPC.
+   * Race-free — uses UPDATE ... RETURNING under FOR UPDATE row lock.
+   * @param delta positive to add, negative to charge
+   * @returns { newBalance, shortfall }  shortfall>0 means the charge exceeded available balance
+   */
+  async function chargeBalance(memberId, delta, reason = 'session') {
+    const { data, error } = await sb.rpc('apply_balance_delta', {
+      p_member_id: memberId,
+      p_delta: delta,
+      p_reason: reason,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    const newBalance = Number(row.new_balance);
+    const shortfall = Number(row.shortfall || 0);
+
+    // Sync cache
+    const idx = _cache.members.findIndex(m => m.id === memberId);
+    if (idx >= 0) _cache.members[idx].balance = newBalance;
+
+    return { newBalance, shortfall };
+  }
+
+  /**
+   * Soft-delete a member. Per owner policy: member history MUST persist.
+   * archived_at is set; rows stay in DB; UI filters by archived_at IS NULL.
+   * Hard delete is blocked if balance > 0 or active sessions exist.
+   */
+  async function deleteMember(id, opts = {}) {
+    const m = getMember(id);
+    if (!m) return;
+    const active = _cache.sessions.some(s => s.memberId === id && s.status === 'active');
+    if (active && !opts.force) {
+      throw new Error('会员有进行中的游戏台 / Member has active session — close first');
+    }
+    if (m.balance > 0 && !opts.force) {
+      throw new Error(`会员有余额 ${m.balance.toFixed(2)} / Member has non-zero balance — top down or refund first`);
+    }
+    // Soft delete: mark archived. Do NOT remove from DB.
+    await sb.from('members').update({
+      archived_at: new Date().toISOString(),
+      archived_reason: opts.reason || 'manual_delete',
+    }).eq('id', id);
+    _cache.members = _cache.members.filter(x => x.id !== id);
+
+    // Audit log
+    await sb.from('audit_log').insert({
+      action: 'member_archive',
+      before_state: { id: m.id, name: m.name, balance: m.balance, tier: m.tier },
+      note: opts.reason || null,
+    });
   }
 
   /**
@@ -517,6 +650,7 @@ GC.Store = (function () {
   async function applyTopUp(memberId, amount) {
     const m = getMember(memberId);
     if (!m) throw new Error('Member not found');
+    if (!amount || amount <= 0) throw new Error('Invalid amount');
     const s = _cache.settings;
     const oldTier = m.tier;
     let newTier = oldTier;
@@ -524,25 +658,30 @@ GC.Store = (function () {
     let reason = 'recharge';
 
     if (amount >= s.memberFees.platinum) {
-      // Becomes Platinum (or stays Platinum). $20 bonus.
       newTier = 'platinum';
       bonus = s.platinumTopupBonus;
       reason = oldTier === 'platinum' ? 'platinum_recharge'
              : oldTier === 'silver' ? 'silver_to_platinum'
              : 'new_platinum';
     } else if (amount >= s.memberFees.silver && oldTier === 'regular') {
-      // New Silver
       newTier = 'silver';
       reason = 'new_silver';
     } else {
-      // Stays current tier
       reason = oldTier === 'regular' ? 'partial' : 'recharge';
     }
 
-    const newBalance = m.balance + amount + bonus;
-    const updated = await updateMember(memberId, { balance: newBalance, tier: newTier });
+    // Atomic balance add via RPC (race-free)
+    const { newBalance } = await chargeBalance(memberId, amount + bonus, reason);
 
-    // Log top-up
+    // Update tier (separate write — not racy because tier is non-numeric and rarely concurrent)
+    let updated;
+    if (newTier !== oldTier) {
+      updated = await updateMember(memberId, { tier: newTier });
+    } else {
+      updated = getMember(memberId);
+    }
+
+    // Log top-up row
     const topUpRow = {
       member_id: memberId,
       amount, bonus,
@@ -564,6 +703,7 @@ GC.Store = (function () {
   /* ========== Settings ========== */
 
   async function saveSettings(appSettings) {
+    const before = _cache.settings ? JSON.parse(JSON.stringify(_cache.settings)) : null;
     const row = {
       rate_regular_switch2: appSettings.rates.regular['Switch 2'],
       rate_regular_ps5: appSettings.rates.regular['PS5'],
@@ -579,13 +719,24 @@ GC.Store = (function () {
       platinum_topup_bonus: appSettings.platinumTopupBonus,
       warn_minutes: appSettings.warnMinutes,
       max_players_per_station: appSettings.maxPlayersPerStation,
-      currency: appSettings.currency,
+      currency: appSettings.currency || (_cache.settings && _cache.settings.currency) || 'SGD',
       currency_symbol: appSettings.currencySymbol,
       min_billing_minutes: appSettings.minBillingMinutes,
       updated_at: new Date().toISOString(),
     };
     await sb.from('settings').update(row).eq('id', 1);
     _cache.settings = appSettings;
+
+    // Audit log — capture before/after for every settings change
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      await sb.from('audit_log').insert({
+        action: 'settings_update',
+        actor_email: user?.email || null,
+        before_state: before,
+        after_state: appSettings,
+      });
+    } catch (e) { console.warn('audit failed', e); }
   }
 
   async function togglePromo(active) {
@@ -595,17 +746,51 @@ GC.Store = (function () {
   }
 
   async function clearSessions() {
+    // Audit BEFORE deletion (so we capture what was cleared)
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      const sessionCount = _cache.sessions.length;
+      await sb.from('audit_log').insert({
+        action: 'sessions_clear',
+        actor_email: user?.email || null,
+        before_state: { count: sessionCount },
+        note: `Cleared ${sessionCount} session(s)`,
+      });
+    } catch (e) { console.warn('audit failed', e); }
     await sb.from('sessions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     _cache.sessions = [];
   }
 
-  async function resetAll() {
-    await Promise.all([
-      sb.from('sessions').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      sb.from('top_ups').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      sb.from('members').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
-      sb.from('stations').update({ status: 'idle' }).neq('id', 0),
-    ]);
+  async function resetAll(confirmString) {
+    // SAFETY: require typed confirmation string "RESET" to proceed
+    if (confirmString !== 'RESET') {
+      throw new Error('resetAll requires confirmString "RESET" — refused for safety');
+    }
+    // Audit BEFORE
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      await sb.from('audit_log').insert({
+        action: 'reset_all',
+        actor_email: user?.email || null,
+        before_state: {
+          sessions: _cache.sessions.length,
+          top_ups: _cache.topUps.length,
+          members: _cache.members.length,
+        },
+        note: 'Full reset triggered',
+      });
+    } catch (e) { console.warn('audit failed', e); }
+
+    // Sequential delete (not Promise.all — order matters for FK + realtime)
+    await sb.from('sessions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await sb.from('top_ups').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    // Soft-delete members instead of hard delete (owner policy: member history MUST persist)
+    await sb.from('members').update({
+      archived_at: new Date().toISOString(),
+      archived_reason: 'reset_all',
+    }).is('archived_at', null);
+    await sb.from('stations').update({ status: 'idle' }).neq('id', 0);
+
     await init();
   }
 
@@ -762,13 +947,14 @@ GC.Store = (function () {
   async function voidOrder(orderId) {
     const order = getOrder(orderId);
     if (!order) throw new Error('Order not found');
+    if (order.status === 'voided') return; // idempotent
 
-    // Refund to member balance if it was deducted
+    // Refund to member balance atomically if it was deducted
     if (order.paymentMethod === 'member_balance' && order.memberId) {
       const m = getMember(order.memberId);
       if (m) {
+        await chargeBalance(order.memberId, order.total, `void_order_${order.orderNo}`);
         await updateMember(order.memberId, {
-          balance: m.balance + order.total,
           totalSpent: Math.max(0, m.totalSpent - order.total),
         });
       }
@@ -777,6 +963,13 @@ GC.Store = (function () {
     await sb.from('orders').update({ status: 'voided' }).eq('id', orderId);
     const idx = _cache.orders.findIndex(o => o.id === orderId);
     if (idx >= 0) _cache.orders[idx].status = 'voided';
+
+    // Audit
+    await sb.from('audit_log').insert({
+      action: 'order_void',
+      before_state: { order_no: order.orderNo, total: order.total, payment: order.paymentMethod, member_id: order.memberId },
+      note: `Voided order #${order.orderNo}`,
+    });
   }
 
   /* ========== Export / Import ========== */
@@ -826,6 +1019,8 @@ GC.Store = (function () {
 
   return {
     init,
+    // Time (clock-synced with server)
+    now, syncClock,
     // Reads
     getSettings, getStations, getStation,
     getMembers, getMember, getMemberByBindCode,
@@ -845,7 +1040,7 @@ GC.Store = (function () {
     openSession, extendWalkIn, closeSession,
     // Members
     addMember, updateMember, deleteMember,
-    applyTopUp, regenerateBindCode,
+    chargeBalance, applyTopUp, regenerateBindCode,
     // Settings
     saveSettings, togglePromo, clearSessions, resetAll,
     // Export

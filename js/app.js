@@ -16,6 +16,13 @@ window.GC = window.GC || {};
 
   GC._currentView = null;
 
+  /* ---- HTML escape (prevents XSS via member.name, guest_name, etc) ---- */
+  const _escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  GC.esc = function (s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => _escMap[c]);
+  };
+
   /* ---- Toast ---- */
   GC.toast = function (msg, type) {
     type = type || 'success';
@@ -61,6 +68,19 @@ window.GC = window.GC || {};
     booted = true;
     try {
       await GC.Store.init();
+      // Sync client clock with server once on boot; resync on tab refocus
+      await GC.Store.syncClock();
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) GC.Store.syncClock();
+      });
+      // Request browser notification permission ONCE on first user click (not on every warning)
+      if ('Notification' in window && Notification.permission === 'default') {
+        const onceClick = () => {
+          Notification.requestPermission().catch(() => {});
+          document.removeEventListener('click', onceClick);
+        };
+        document.addEventListener('click', onceClick);
+      }
       GC.Auth.showNavbar();
       bindNav();
       navigate('pos');

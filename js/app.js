@@ -179,10 +179,19 @@ window.GC = window.GC || {};
       ${!current.active ? '<span class="branch-inactive-tag">未启用</span>' : ''}
     `;
 
-    // Insert AFTER nav-brand, BEFORE nav-links
-    const brand = navbar.querySelector('.nav-brand');
-    if (brand && brand.nextSibling) brand.parentNode.insertBefore(chip, brand.nextSibling);
-    else navbar.appendChild(chip);
+    // Insert location depends on viewport:
+    // - Desktop (>640px): inside navbar between brand and links (inline)
+    // - Mobile (≤640px): direct child of <body> so position:fixed in CSS
+    //   escapes any containing block (backdrop-filter on the bottom navbar
+    //   was trapping the chip). z-index keeps it above main content.
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    if (isMobile) {
+      document.body.appendChild(chip);
+    } else {
+      const brand = navbar.querySelector('.nav-brand');
+      if (brand && brand.nextSibling) brand.parentNode.insertBefore(chip, brand.nextSibling);
+      else navbar.appendChild(chip);
+    }
 
     if (canSwitch) {
       chip.addEventListener('click', () => showBranchPicker(switchable, current.id));

@@ -96,13 +96,21 @@ GC.Auth = (function () {
       logoutBtn.id = 'logout-btn';
       logoutBtn.className = 'btn btn-ghost btn-sm';
       logoutBtn.textContent = '退出';
-      logoutBtn.style.marginLeft = '12px';
       logoutBtn.addEventListener('click', async () => {
         // Mark this as user-initiated so app.js doesn't show a 'session expired' toast.
         GC._userInitiatedLogout = true;
         await GC.supabase.auth.signOut();
       });
-      nav.querySelector('.nav-links').appendChild(logoutBtn);
+      // Mobile (≤640px): mount on <body> so CSS position:fixed lifts it
+      // to a top-right floating button (matches branch chip behavior).
+      // Desktop: mount inside navbar's nav-links so it sits at the right end.
+      const isMobile = window.matchMedia('(max-width: 640px)').matches;
+      if (isMobile) {
+        document.body.appendChild(logoutBtn);
+      } else {
+        logoutBtn.style.marginLeft = '12px';
+        nav.querySelector('.nav-links').appendChild(logoutBtn);
+      }
     }
   }
 

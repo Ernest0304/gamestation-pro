@@ -1,14 +1,14 @@
 {
-  "name": "GameStation Pro",
-  "short_name": "GameStation",
-  "description": "电竞甜品店计费系统",
+  "name": "郁香潭 · Yuu Xiang Dam",
+  "short_name": "YXD",
+  "description": "点单 · 收银 · 游戏台计费系统 / POS + Gaming",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#06090f",
-  "theme_color": "#06b6d4",
+  "theme_color": "#7a0818",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>",
+      "src": "/img/logo.svg",
       "sizes": "any",
       "type": "image/svg+xml"
     }

@@ -11,13 +11,9 @@ GC.Auth = (function () {
       <div class="login-page">
         <div class="login-card">
           <div class="login-brand">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="36" height="36">
-              <line x1="6" y1="12" x2="10" y2="12"></line><line x1="8" y1="10" x2="8" y2="14"></line>
-              <circle cx="15" cy="13" r="1"></circle><circle cx="18" cy="11" r="1"></circle>
-              <rect x="2" y="6" width="20" height="12" rx="3"></rect>
-            </svg>
-            <h1>Game<span class="brand-accent">Station</span> Pro</h1>
-            <p class="login-subtitle">电竞甜品店计费系统</p>
+            <img src="/img/logo.svg" alt="郁香潭" style="width:100px;height:100px;margin-bottom:8px;filter:drop-shadow(0 4px 12px rgba(122,8,24,0.3))">
+            <h1>郁香潭 · <span class="brand-accent">Yuu Xiang Dam</span></h1>
+            <p class="login-subtitle">点单 · 收银 · 游戏台 计费系统</p>
           </div>
           <form id="login-form">
             <div class="form-group">

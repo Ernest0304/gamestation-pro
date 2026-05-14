@@ -53,10 +53,31 @@ input, select, textarea { font-family: inherit; }
   border-bottom: 1px solid var(--border);
 }
 .nav-brand {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 12px;
 }
-.nav-brand svg { width: 28px; height: 28px; color: var(--cyan); }
+.nav-logo {
+  width: 44px; height: 44px;
+  display: block;
+  filter: drop-shadow(0 2px 6px rgba(122, 8, 24, 0.25));
+}
+.nav-brand-text {
+  display: flex; flex-direction: column; line-height: 1.1;
+}
+.nav-brand-zh {
+  font-size: 1.05rem; font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.04em;
+}
+.nav-brand-en {
+  font-size: 0.7rem; font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+/* In POS light-mode, brand text needs to switch to dark */
+body.pos-mode .nav-brand-zh { color: #7a0818; }
+body.pos-mode .nav-brand-en { color: #92775a; }
+/* Legacy class kept for older modals that may still reference it */
 .brand-accent { color: var(--cyan); }
 .nav-links { display: flex; gap: 4px; }
 .nav-link {
@@ -707,6 +728,7 @@ select.form-input { appearance: none; cursor: pointer;
     flex-wrap: wrap; justify-content: center; gap: 0;
   }
   .nav-brand { display: none; }
+  /* If you'd rather show just the logo on mobile (top bar), comment out the line above */
   .nav-links {
     display: flex; width: 100%; justify-content: space-around; gap: 0;
   }

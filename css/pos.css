@@ -563,6 +563,139 @@ body.pos-mode .form-label { color: #6b5840; }
   margin-top: 4px; opacity: 0.85;
 }
 
+/* ===== Big checkout button (Option C 2026-05-14) =====
+   Replaces the 5 stacked payment buttons that were pushing the cart-list
+   off-screen. One big primary CTA → opens pay sheet for method choice. */
+.pos-checkout-btn {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 18px 22px;
+  background: var(--pos-primary-grad);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  font-size: 1.08rem; font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer; font-family: inherit;
+  box-shadow: 0 6px 20px rgba(120,53,15,0.28);
+  transition: all 0.18s;
+}
+.pos-checkout-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(120,53,15,0.36);
+  filter: brightness(1.04);
+}
+.pos-checkout-btn:active:not(:disabled) { transform: translateY(0); }
+.pos-checkout-btn:disabled {
+  opacity: 0.4; cursor: not-allowed;
+  background: var(--pos-card-hover);
+  color: var(--pos-text-muted);
+  box-shadow: none;
+}
+.pos-checkout-arrow { font-size: 1.3rem; }
+.pos-checkout-label { font-weight: 700; }
+.pos-checkout-amount {
+  font-family: var(--mono);
+  font-size: 1.2rem; font-weight: 800;
+  margin-left: auto;
+  padding-left: 14px;
+  border-left: 2px solid rgba(255,255,255,0.25);
+}
+
+/* ===== Pay sheet modal ===== */
+.pay-sheet { max-width: 480px; }
+.pay-sheet-amount {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 22px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem; color: var(--text-secondary);
+  font-weight: 600;
+}
+body.pos-mode .pay-sheet-amount {
+  background: var(--pos-card-hover);
+  color: var(--pos-text);
+  border-color: var(--pos-border);
+}
+.pay-sheet-total {
+  font-family: var(--mono);
+  font-size: 1.6rem; font-weight: 800;
+  color: var(--cyan);
+  letter-spacing: -0.02em;
+}
+body.pos-mode .pay-sheet-total { color: var(--pos-primary); }
+
+.pay-sheet-list {
+  display: flex; flex-direction: column;
+  padding: 14px;
+  gap: 10px;
+}
+.pay-option {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer; font-family: inherit;
+  text-align: left; width: 100%;
+  transition: all 0.15s;
+}
+body.pos-mode .pay-option {
+  background: var(--pos-card-hover);
+  border-color: var(--pos-border);
+}
+.pay-option:hover:not(:disabled) {
+  border-color: var(--cyan);
+  background: rgba(6,182,212,0.08);
+  transform: translateY(-1px);
+}
+body.pos-mode .pay-option:hover:not(:disabled) {
+  border-color: var(--pos-primary);
+  background: var(--pos-card);
+  box-shadow: 0 4px 12px rgba(120,53,15,0.08);
+}
+.pay-option:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.pay-option.primary {
+  background: linear-gradient(135deg, rgba(139,92,246,0.12), rgba(167,139,250,0.06));
+  border-color: var(--purple, #8b5cf6);
+}
+body.pos-mode .pay-option.primary {
+  background: linear-gradient(135deg, #fef3e2, #fed7aa);
+  border-color: var(--pos-primary);
+}
+.pay-option-icon {
+  font-size: 1.7rem;
+  width: 42px; text-align: center;
+  flex-shrink: 0;
+}
+.pay-option-text { flex: 1; min-width: 0; }
+.pay-option-text > div:first-child {
+  font-size: 1rem; font-weight: 700;
+  color: var(--text-primary);
+}
+body.pos-mode .pay-option-text > div:first-child { color: var(--pos-text); }
+.pay-option-text small {
+  font-size: 0.74rem; color: var(--text-muted);
+  display: block; margin-top: 3px;
+}
+.pay-option-grab {
+  border-color: rgba(0,180,80,0.35);
+  background: linear-gradient(135deg, rgba(0,180,80,0.08), rgba(0,180,80,0.03));
+}
+.pay-option-foodpanda {
+  border-color: rgba(217,42,118,0.35);
+  background: linear-gradient(135deg, rgba(217,42,118,0.08), rgba(217,42,118,0.03));
+}
+body.pos-mode .pay-option-grab {
+  background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+  border-color: #6ee7b7;
+}
+body.pos-mode .pay-option-foodpanda {
+  background: linear-gradient(135deg, #fdf2f8, #fbcfe8);
+  border-color: #f9a8d4;
+}
+
 /* ===== Member picker modal (uses dark theme since modal is outside .pos-view) ===== */
 .pos-modal .pos-member-pick-list {
   margin-top: 14px; max-height: 50vh; overflow-y: auto;

@@ -277,21 +277,11 @@ GC.POS = (function () {
             <span>${sym}${total.toFixed(2)}</span>
           </div>
 
-          <div class="pos-pay-options">
-            ${member ? `
-              <button class="pos-pay-btn primary" id="pay-balance" ${!canMemberPay ? 'disabled' : ''}>
-                💎 扣余额 / Member Pay
-                ${!canMemberPay && member ? '<div class="pos-pay-warn">余额不足</div>' : ''}
-              </button>
-            ` : ''}
-            <button class="pos-pay-btn ${member ? '' : 'primary'}" id="pay-cash" ${!canCheckout ? 'disabled' : ''}>💵 现金 Cash</button>
-            <button class="pos-pay-btn" id="pay-paynow" ${!canCheckout ? 'disabled' : ''}>📱 PayNow</button>
-            <button class="pos-pay-btn" id="pay-split" ${!canCheckout ? 'disabled' : ''}>🔀 拆账 / Split</button>
-          </div>
-          <div class="pos-pay-options pos-pay-delivery">
-            <button class="pos-pay-btn pay-delivery grab" id="pay-grab" ${!canCheckout ? 'disabled' : ''}>🛵 Grab</button>
-            <button class="pos-pay-btn pay-delivery foodpanda" id="pay-foodpanda" ${!canCheckout ? 'disabled' : ''}>🐼 FoodPanda</button>
-          </div>
+          <button class="pos-checkout-btn" id="pos-checkout" ${!canCheckout ? 'disabled' : ''}>
+            <span class="pos-checkout-arrow">→</span>
+            <span class="pos-checkout-label">结账 / Pay</span>
+            <span class="pos-checkout-amount">${sym}${total.toFixed(2)}</span>
+          </button>
         </div>
       </div>`;
   }
@@ -368,19 +358,9 @@ GC.POS = (function () {
       });
     });
 
-    // Payment buttons
-    const payBal = document.getElementById('pay-balance');
-    const payCash = document.getElementById('pay-cash');
-    const payNow = document.getElementById('pay-paynow');
-    const paySplit = document.getElementById('pay-split');
-    const payGrab = document.getElementById('pay-grab');
-    const payFP = document.getElementById('pay-foodpanda');
-    if (payBal) payBal.addEventListener('click', () => checkout('member_balance'));
-    if (payCash) payCash.addEventListener('click', () => checkout('cash'));
-    if (payNow) payNow.addEventListener('click', () => checkout('paynow'));
-    if (paySplit) paySplit.addEventListener('click', () => showSplitBillModal());
-    if (payGrab) payGrab.addEventListener('click', () => checkoutDelivery('grab'));
-    if (payFP) payFP.addEventListener('click', () => checkoutDelivery('foodpanda'));
+    // Single checkout button → opens pay sheet (Option C 2026-05-14)
+    const checkoutBtn = document.getElementById('pos-checkout');
+    if (checkoutBtn) checkoutBtn.addEventListener('click', () => showPaySheet());
 
     // Search
     const search = document.getElementById('pos-search');
@@ -797,6 +777,100 @@ GC.POS = (function () {
     } catch (e) {
       GC.toast('结账失败 / Failed: ' + e.message, 'error');
     }
+  }
+
+  /* ---- Pay sheet (Option C 2026-05-14) ----
+     One big "结账" button on the cart panel opens this sheet to choose
+     payment method. Keeps the cart panel uncluttered so the items list
+     is always visible (was being pushed off-screen by 5 stacked pay buttons).
+  */
+  function showPaySheet() {
+    if (cart.length === 0) return;
+    const sym = GC.Store.getSettings().currencySymbol;
+    const total = cartTotal();
+    const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
+    const canMemberPay = member && member.balance >= total;
+    const memberBalShort = member && !canMemberPay;
+
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content pay-sheet">
+          <div class="modal-header">
+            <h3>💳 选择付款方式 / Choose Payment</h3>
+            <button class="modal-close" id="ps-close">&times;</button>
+          </div>
+          <div class="pay-sheet-amount">
+            <span>应收 / Total</span>
+            <span class="pay-sheet-total">${sym}${total.toFixed(2)}</span>
+          </div>
+          <div class="pay-sheet-list">
+            ${member ? `
+              <button class="pay-option ${canMemberPay ? 'primary' : ''}" data-pay="member_balance" ${!canMemberPay ? 'disabled' : ''}>
+                <span class="pay-option-icon">💎</span>
+                <div class="pay-option-text">
+                  <div>扣余额 / Member Pay</div>
+                  <small>${GC.esc(member.name)} · 余额 ${sym}${member.balance.toFixed(2)}${memberBalShort ? ' ⚠️ 余额不足' : ''}</small>
+                </div>
+              </button>
+            ` : ''}
+            <button class="pay-option" data-pay="cash">
+              <span class="pay-option-icon">💵</span>
+              <div class="pay-option-text">
+                <div>现金 / Cash</div>
+                <small>含找零计算</small>
+              </div>
+            </button>
+            <button class="pay-option" data-pay="paynow">
+              <span class="pay-option-icon">📱</span>
+              <div class="pay-option-text">
+                <div>PayNow</div>
+                <small>扫码即付</small>
+              </div>
+            </button>
+            <button class="pay-option" data-pay="split">
+              <span class="pay-option-icon">🔀</span>
+              <div class="pay-option-text">
+                <div>拆账 / Split</div>
+                <small>多种方式组合付款</small>
+              </div>
+            </button>
+            <button class="pay-option pay-option-grab" data-pay="grab">
+              <span class="pay-option-icon">🛵</span>
+              <div class="pay-option-text">
+                <div>Grab</div>
+                <small>外卖平台 · 自动计算差额</small>
+              </div>
+            </button>
+            <button class="pay-option pay-option-foodpanda" data-pay="foodpanda">
+              <span class="pay-option-icon">🐼</span>
+              <div class="pay-option-text">
+                <div>FoodPanda</div>
+                <small>外卖平台 · 自动计算差额</small>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('ps-close').onclick = close;
+
+    modal.querySelectorAll('[data-pay]').forEach(b => {
+      b.addEventListener('click', () => {
+        if (b.disabled) return;
+        const method = b.dataset.pay;
+        close();
+        // Defer to next tick so close animation doesn't conflict with next modal.
+        setTimeout(() => {
+          if (method === 'split') showSplitBillModal();
+          else if (method === 'grab') checkoutDelivery('grab');
+          else if (method === 'foodpanda') checkoutDelivery('foodpanda');
+          else checkout(method);
+        }, 50);
+      });
+    });
   }
 
   /* ---- Add custom charge modal ---- */

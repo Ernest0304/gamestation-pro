@@ -450,6 +450,21 @@ GC.POS = (function () {
                 <button class="discount-quick-btn" data-quick="50">50%</button>
                 <button class="discount-quick-btn" data-quick="100">免单 Free</button>
               </div>
+              <!-- Touch-friendly numpad — same as cash modal -->
+              <div class="cash-numpad" style="margin-top:10px;max-width:280px">
+                <button class="np-btn" data-disc-digit="1">1</button>
+                <button class="np-btn" data-disc-digit="2">2</button>
+                <button class="np-btn" data-disc-digit="3">3</button>
+                <button class="np-btn" data-disc-digit="4">4</button>
+                <button class="np-btn" data-disc-digit="5">5</button>
+                <button class="np-btn" data-disc-digit="6">6</button>
+                <button class="np-btn" data-disc-digit="7">7</button>
+                <button class="np-btn" data-disc-digit="8">8</button>
+                <button class="np-btn" data-disc-digit="9">9</button>
+                <button class="np-btn dot" data-disc-digit=".">.</button>
+                <button class="np-btn" data-disc-digit="0">0</button>
+                <button class="np-btn back" data-disc-back>⌫</button>
+              </div>
             </div>
 
             <div class="form-group">
@@ -535,6 +550,21 @@ GC.POS = (function () {
       b.addEventListener('click', () => {
         valInput.value = b.dataset.quick;
         updatePreview();
+      });
+    });
+
+    // Numpad — touch-friendly entry on iPad
+    modal.querySelectorAll('.np-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        if (b.hasAttribute('data-disc-back')) {
+          valInput.value = valInput.value.slice(0, -1);
+        } else {
+          const d = b.dataset.discDigit;
+          if (d === '.' && valInput.value.includes('.')) return;
+          valInput.value = (valInput.value || '') + d;
+        }
+        updatePreview();
+        valInput.focus();
       });
     });
 

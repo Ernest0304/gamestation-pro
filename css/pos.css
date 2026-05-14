@@ -181,24 +181,13 @@ body.pos-mode .form-label { color: #6b5840; }
   overflow: hidden;
 }
 
-.pos-menu-top {
-  padding: 22px 28px;
-  border-bottom: 1px solid var(--pos-border);
-}
-.pos-brand-title {
-  font-size: 1.5rem; font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--pos-primary);
-  margin-bottom: 4px;
-}
-.pos-brand-subtitle {
-  font-size: 0.82rem; color: var(--pos-text-muted);
-  font-style: italic;
-}
+/* Brand block (.pos-menu-top / .pos-brand-title / .pos-brand-subtitle)
+   was removed 2026-05-14 — info duplicated from navbar. Category bar
+   now serves as the panel's visual header. */
 
 .pos-category-bar {
   display: flex; gap: 8px;
-  padding: 14px 28px;
+  padding: 16px 28px;
   background: var(--pos-bg-2);
   border-bottom: 1px solid var(--pos-border);
   overflow-x: auto;
@@ -1218,8 +1207,7 @@ body.pos-mode .np-btn:hover { background: #fef3e2; }
 @media (max-width: 1024px) {
   .pos-layout { grid-template-columns: 1fr 340px; }
   .pos-menu-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 14px 20px 20px; }
-  .pos-menu-top { padding: 18px 22px; }
-  .pos-category-bar { padding: 12px 22px; }
+  .pos-category-bar { padding: 14px 22px; }
 }
 @media (max-width: 768px) {
   .pos-view { margin: -16px -14px -56px; padding: 12px; }
@@ -1234,8 +1222,6 @@ body.pos-mode .np-btn:hover { background: #fef3e2; }
   }
   .pos-menu-grid { grid-template-columns: repeat(2, 1fr); }
   .pos-item-emoji { font-size: 2.2rem; }
-  .pos-brand-title { font-size: 1.2rem; }
-  .pos-brand-subtitle { font-size: 0.75rem; }
 }
 
 /* ===== Print receipt ===== */

@@ -143,17 +143,17 @@ GC.POS = (function () {
       }).join('');
     }
 
+    // Brand block removed 2026-05-14 — info was duplicated from navbar
+    // (logo + 郁香潭 · YUU XIANG DAM is always shown top-left, branch chip
+    // shows current location). Category bar becomes the panel's natural
+    // visual header.
     return `
       <div class="pos-menu-panel">
-        <div class="pos-menu-top">
-          <div class="pos-brand-title">郁香潭 · Yuu Xiang Dam</div>
-          <div class="pos-brand-subtitle">handcrafted sweetness · 点单收银</div>
-        </div>
         <div class="pos-category-bar">
           ${catTabs}
         </div>
         <div class="pos-search-row">
-          <input type="text" id="pos-search" class="pos-search" placeholder="搜索菜品或输入编号 / Search name or #">
+          <input type="text" id="pos-search" class="pos-search" placeholder="🔍 搜索菜品或输入编号 / Search name or #">
         </div>
         <div class="pos-menu-grid">
           ${itemCards}

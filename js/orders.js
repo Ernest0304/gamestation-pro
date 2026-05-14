@@ -1,78 +1,220 @@
 /**
- * Orders — F&B order history and details.
+ * Orders — F&B + Gaming transaction history with rich filters.
+ *
+ * 2026-05-14 (Ernest): "现在只是报表上可以做filter 我一开始的意思其实是
+ * orders 里也能让我们filter" — extend the same time-range/category filter
+ * we built for Reports into the Orders page, plus payment-method filter
+ * (cashier needs to slice by Grab / FoodPanda quickly).
  */
 window.GC = window.GC || {};
 
 GC.Orders = (function () {
-  let selectedDate = (() => {
-    const d = new Date();
+  // Date string (local) helper
+  function localDateStr(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  })();
-  let statusFilter = 'all'; // all | completed | voided
+  }
+  const TODAY = localDateStr(new Date());
+
+  // Filter state — shop hours 12:00 → next-day 01:00 (hours 12-25)
+  let filterStartDate = TODAY;
+  let filterEndDate = TODAY;
+  let filterStartHour = 12;
+  let filterEndHour = 25;
+  let filterCategory = 'all';       // 'all' | 'food' | 'gaming'
+  let statusFilter = 'all';         // 'all' | 'completed' | 'voided'
+  let methodFilter = 'all';         // 'all' | 'cash' | 'paynow' | 'member_balance' | 'card' | 'grab' | 'foodpanda' | 'mixed'
 
   function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); }
-  function fmtDate(ts) { return new Date(ts).toLocaleDateString('zh-CN'); }
+  function fmtDate(ts) { return new Date(ts).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }); }
+  function fmtDur(mins) {
+    const h = Math.floor(mins / 60);
+    const m = Math.round(mins % 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
 
   function methodLabel(m) {
     return ({
-      cash: '现金',
+      cash: '现金 Cash',
       paynow: 'PayNow',
       member_balance: '会员余额',
       card: '信用卡',
-      mixed: '混合',
+      mixed: '🔀 拆账',
       pending: '待付款',
+      grab: '🛵 Grab',
+      foodpanda: '🐼 FoodPanda',
     })[m] || m;
   }
 
-  function getFiltered() {
-    const start = new Date(selectedDate + 'T00:00:00').getTime();
-    const end = start + 86400000;
+  /* ---- Hour selector helper ---- */
+  function hourOptions(selected) {
+    const opts = [];
+    for (let h = 12; h <= 25; h++) {
+      const label = h < 24 ? `${String(h).padStart(2, '0')}:00`
+                   : h === 24 ? '00:00 (午夜)'
+                   : '01:00 (次日)';
+      opts.push(`<option value="${h}" ${selected === h ? 'selected' : ''}>${label}</option>`);
+    }
+    return opts.join('');
+  }
+
+  /* ---- Compute SGT-pinned window from filter state ---- */
+  function getWindow() {
+    // sgtMs: yyyy-mm-dd plus hour offset where hour 12 = 12:00 SGT,
+    // hour 25 = 01:00 SGT next day.
+    const sgtMs = (yyyymmdd, hourOffset) =>
+      new Date(yyyymmdd + 'T12:00:00+08:00').getTime() + (hourOffset - 12) * 3600 * 1000;
+    return {
+      start: sgtMs(filterStartDate, filterStartHour),
+      end: sgtMs(filterEndDate, filterEndHour),
+    };
+  }
+
+  /* ---- Filtering ---- */
+  function getFilteredOrders() {
+    const { start, end } = getWindow();
     return GC.Store.getOrders().filter(o => {
       const t = o.completedAt || o.createdAt;
       if (t < start || t >= end) return false;
       if (statusFilter !== 'all' && o.status !== statusFilter) return false;
+      if (methodFilter !== 'all' && o.paymentMethod !== methodFilter) return false;
       return true;
     });
   }
 
+  function getFilteredSessions() {
+    const { start, end } = getWindow();
+    return (GC.Store.getSessions ? GC.Store.getSessions() : []).filter(s => {
+      if (s.status !== 'completed' || !s.endTime) return false;
+      if (s.endTime < start || s.endTime >= end) return false;
+      // statusFilter applies to orders only; sessions are always shown if status='all'
+      if (statusFilter === 'voided') return false;
+      // Method filter on sessions: derive from s.paymentMethod (cash by default) or member_balance
+      if (methodFilter !== 'all') {
+        const m = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
+        if (m !== methodFilter) return false;
+      }
+      return true;
+    });
+  }
+
+  /* ---- Render ---- */
   function render() {
-    const orders = getFiltered();
     const sym = GC.Store.getSettings().currencySymbol;
 
-    const completed = orders.filter(o => o.status === 'completed');
-    const totalRev = completed.reduce((s, o) => s + o.total, 0);
-    const totalOrders = completed.length;
-    const totalItems = completed.reduce((s, o) => s + GC.Store.getOrderItemsForOrder(o.id).reduce((q, i) => q + i.quantity, 0), 0);
+    const orders = filterCategory === 'gaming' ? [] : getFilteredOrders();
+    const sessions = filterCategory === 'food' ? [] : getFilteredSessions();
 
-    let rows;
-    if (orders.length === 0) {
-      rows = `<tr><td colspan="6" class="table-empty">这一天没有订单 / No orders</td></tr>`;
-    } else {
-      rows = orders.map(o => {
-        const items = GC.Store.getOrderItemsForOrder(o.id);
-        const itemSummary = items.slice(0, 3).map(i => `${i.emoji}${i.quantity > 1 ? '×' + i.quantity : ''}`).join(' ');
-        const moreItems = items.length > 3 ? ` +${items.length - 3}` : '';
-        const customer = o.memberId
-          ? (() => { const m = GC.Store.getMember(o.memberId); return m ? `${m.name} 💎` : '会员'; })()
-          : (o.guestName || '散客');
-        return `
+    const completedOrders = orders.filter(o => o.status === 'completed');
+    const orderRev = completedOrders.reduce((s, o) => s + o.total, 0);
+    const sessionRev = sessions.reduce((s, x) => s + x.total, 0);
+    const totalRev = orderRev + sessionRev;
+    const totalItems = completedOrders.reduce(
+      (s, o) => s + (GC.Store.getOrderItemsForOrder(o.id) || []).reduce((q, i) => q + i.quantity, 0), 0
+    );
+
+    // Build unified rows sorted by time desc
+    const rows = [];
+    orders.forEach(o => {
+      const items = GC.Store.getOrderItemsForOrder(o.id) || [];
+      const itemSummary = items.slice(0, 3).map(i => `${i.emoji}${i.quantity > 1 ? '×' + i.quantity : ''}`).join(' ');
+      const moreItems = items.length > 3 ? ` +${items.length - 3}` : '';
+      const customer = o.memberId
+        ? (() => { const m = GC.Store.getMember(o.memberId); return m ? `${m.name} 💎` : '会员'; })()
+        : (o.guestName || '散客');
+      const tags = [];
+      if (o.takeaway) tags.push('<span class="row-tag takeaway">🥡 外带</span>');
+      if (o.paymentMethod === 'grab') tags.push('<span class="row-tag grab">🛵</span>');
+      if (o.paymentMethod === 'foodpanda') tags.push('<span class="row-tag foodpanda">🐼</span>');
+      rows.push({
+        ts: o.completedAt || o.createdAt,
+        html: `
           <tr data-order="${o.id}" class="${o.status === 'voided' ? 'voided' : ''}">
+            <td><span class="row-type-badge food">🍴</span></td>
             <td><strong>#${o.orderNo}</strong></td>
-            <td>${fmtTime(o.completedAt || o.createdAt)}</td>
+            <td>${fmtDate(o.completedAt || o.createdAt)} ${fmtTime(o.completedAt || o.createdAt)}</td>
             <td>${customer}</td>
-            <td><div class="order-items-preview">${itemSummary}${moreItems}</div></td>
+            <td><div class="order-items-preview">${itemSummary}${moreItems} ${tags.join('')}</div></td>
             <td><span class="payment-tag ${o.paymentMethod}">${methodLabel(o.paymentMethod)}</span></td>
             <td><strong>${sym}${o.total.toFixed(2)}</strong> ${o.status === 'voided' ? '<span class="voided-tag">已作废</span>' : ''}</td>
-          </tr>`;
-      }).join('');
-    }
+          </tr>`,
+      });
+    });
+    sessions.forEach(s => {
+      const player = s.memberId
+        ? (() => { const m = GC.Store.getMember(s.memberId); return m ? `${m.name} 💎` : '会员'; })()
+        : '散客 Walk-in';
+      const method = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
+      rows.push({
+        ts: s.endTime,
+        html: `
+          <tr data-session="${s.id}" class="gaming-row">
+            <td><span class="row-type-badge gaming">🎮</span></td>
+            <td><strong>${s.stationName}</strong></td>
+            <td>${fmtDate(s.endTime)} ${fmtTime(s.startTime)}–${fmtTime(s.endTime)}</td>
+            <td>${player}</td>
+            <td><div class="order-items-preview"><small>${fmtDur(s.durationMinutes)} · ${s.stationType || 'PS5'}</small></div></td>
+            <td><span class="payment-tag ${method}">${methodLabel(method)}</span></td>
+            <td><strong>${sym}${s.total.toFixed(2)}</strong></td>
+          </tr>`,
+      });
+    });
+    rows.sort((a, b) => b.ts - a.ts);
+
+    const tbody = rows.length === 0
+      ? `<tr><td colspan="7" class="table-empty">所选条件下没有记录 / No records in this range</td></tr>`
+      : rows.map(r => r.html).join('');
+
+    const catPill = (key, label) =>
+      `<button class="cat-pill ${filterCategory === key ? 'active' : ''}" data-cat="${key}">${label}</button>`;
 
     document.getElementById('main-content').innerHTML = `
       <div class="page-header">
         <h2 class="page-title">订单历史 / Orders</h2>
-        <div class="filter-bar">
-          <input type="date" id="order-date" class="form-input" value="${selectedDate}">
-          <select id="status-filter" class="form-input">
+        <small style="color:var(--text-muted)">营业时间 12:00 — 次日 01:00</small>
+      </div>
+
+      <div class="filter-panel">
+        <div class="filter-controls">
+          <div class="filter-group">
+            <label class="form-label">起始日期 / Start Date</label>
+            <input type="date" id="flt-start-date" class="form-input" value="${filterStartDate}">
+          </div>
+          <div class="filter-group">
+            <label class="form-label">结束日期 / End Date</label>
+            <input type="date" id="flt-end-date" class="form-input" value="${filterEndDate}">
+          </div>
+          <div class="filter-group">
+            <label class="form-label">从几点 / From Hour</label>
+            <select id="flt-start-hour" class="form-input">${hourOptions(filterStartHour)}</select>
+          </div>
+          <div class="filter-group">
+            <label class="form-label">到几点 / To Hour</label>
+            <select id="flt-end-hour" class="form-input">${hourOptions(filterEndHour)}</select>
+          </div>
+        </div>
+
+        <div class="filter-cat-row">
+          <span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600">类型 / Type:</span>
+          ${catPill('all', '全部 / All')}
+          ${catPill('food', '🍴 餐饮 / F&B')}
+          ${catPill('gaming', '🎮 游戏 / Gaming')}
+        </div>
+
+        <div class="filter-cat-row" style="margin-top:8px">
+          <span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600">付款 / Payment:</span>
+          <select id="flt-method" class="form-input" style="max-width:200px">
+            <option value="all" ${methodFilter === 'all' ? 'selected' : ''}>全部 / All</option>
+            <option value="cash" ${methodFilter === 'cash' ? 'selected' : ''}>💵 现金 Cash</option>
+            <option value="paynow" ${methodFilter === 'paynow' ? 'selected' : ''}>📱 PayNow</option>
+            <option value="member_balance" ${methodFilter === 'member_balance' ? 'selected' : ''}>💎 会员余额</option>
+            <option value="mixed" ${methodFilter === 'mixed' ? 'selected' : ''}>🔀 拆账 Split</option>
+            <option value="grab" ${methodFilter === 'grab' ? 'selected' : ''}>🛵 Grab</option>
+            <option value="foodpanda" ${methodFilter === 'foodpanda' ? 'selected' : ''}>🐼 FoodPanda</option>
+            <option value="card" ${methodFilter === 'card' ? 'selected' : ''}>💳 信用卡</option>
+          </select>
+
+          <span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600;margin-left:10px">状态 / Status:</span>
+          <select id="flt-status" class="form-input" style="max-width:160px">
             <option value="all" ${statusFilter === 'all' ? 'selected' : ''}>全部</option>
             <option value="completed" ${statusFilter === 'completed' ? 'selected' : ''}>已完成</option>
             <option value="voided" ${statusFilter === 'voided' ? 'selected' : ''}>已作废</option>
@@ -82,11 +224,15 @@ GC.Orders = (function () {
 
       <div class="stats-bar">
         <div class="stat-card">
-          <span class="stat-label">订单数 / Orders</span>
-          <span class="stat-value muted">${totalOrders}</span>
+          <span class="stat-label">餐饮订单 / F&amp;B Orders</span>
+          <span class="stat-value muted">${completedOrders.length}</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">售出商品 / Items Sold</span>
+          <span class="stat-label">游戏台 / Sessions</span>
+          <span class="stat-value muted">${sessions.length}</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">售出商品 / Items</span>
           <span class="stat-value muted">${totalItems}</span>
         </div>
         <div class="stat-card">
@@ -99,15 +245,16 @@ GC.Orders = (function () {
         <table class="data-table">
           <thead>
             <tr>
-              <th>订单号</th>
-              <th>时间</th>
-              <th>客户</th>
-              <th>商品</th>
-              <th>付款</th>
-              <th>金额</th>
+              <th style="width:36px"></th>
+              <th>编号 / ID</th>
+              <th>时间 / Time</th>
+              <th>客户 / Customer</th>
+              <th>明细 / Detail</th>
+              <th>付款 / Pay</th>
+              <th>金额 / Amount</th>
             </tr>
           </thead>
-          <tbody>${rows}</tbody>
+          <tbody>${tbody}</tbody>
         </table>
       </div>`;
 
@@ -115,14 +262,32 @@ GC.Orders = (function () {
   }
 
   function bindEvents() {
-    document.getElementById('order-date').addEventListener('change', e => {
-      selectedDate = e.target.value;
+    const sd = document.getElementById('flt-start-date');
+    const ed = document.getElementById('flt-end-date');
+    const sh = document.getElementById('flt-start-hour');
+    const eh = document.getElementById('flt-end-hour');
+    const fm = document.getElementById('flt-method');
+    const fs = document.getElementById('flt-status');
+
+    if (sd) sd.addEventListener('change', e => { filterStartDate = e.target.value; render(); });
+    if (ed) ed.addEventListener('change', e => { filterEndDate = e.target.value; render(); });
+    if (sh) sh.addEventListener('change', e => {
+      filterStartHour = parseInt(e.target.value);
+      if (filterEndHour <= filterStartHour) filterEndHour = Math.min(25, filterStartHour + 1);
       render();
     });
-    document.getElementById('status-filter').addEventListener('change', e => {
-      statusFilter = e.target.value;
+    if (eh) eh.addEventListener('change', e => {
+      filterEndHour = parseInt(e.target.value);
+      if (filterEndHour <= filterStartHour) filterStartHour = Math.max(12, filterEndHour - 1);
       render();
     });
+    if (fm) fm.addEventListener('change', e => { methodFilter = e.target.value; render(); });
+    if (fs) fs.addEventListener('change', e => { statusFilter = e.target.value; render(); });
+
+    document.querySelectorAll('[data-cat]').forEach(b => {
+      b.addEventListener('click', () => { filterCategory = b.dataset.cat; render(); });
+    });
+
     document.querySelectorAll('[data-order]').forEach(r => {
       r.addEventListener('click', () => showOrderDetail(r.dataset.order));
     });
@@ -132,6 +297,7 @@ GC.Orders = (function () {
     const order = GC.Store.getOrder(orderId);
     if (!order) return;
     const items = GC.Store.getOrderItemsForOrder(orderId);
+    const tenders = GC.Store.getOrderPaymentsFor ? GC.Store.getOrderPaymentsFor(orderId) : [];
     const sym = GC.Store.getSettings().currencySymbol;
     const customer = order.memberId
       ? (() => { const m = GC.Store.getMember(order.memberId); return m ? `${m.name} 💎 ${m.tier}` : '会员'; })()
@@ -148,6 +314,26 @@ GC.Orders = (function () {
         <div class="oi-sub">${sym}${i.subtotal.toFixed(2)}</div>
       </div>`).join('');
 
+    // Split-bill tender breakdown (when paymentMethod=mixed)
+    const tendersHtml = tenders.length > 1 ? `
+      <div class="settlement-divider"></div>
+      <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:6px">付款明细 / Tender Breakdown</div>
+      ${tenders.map(t => `
+        <div class="settlement-row" style="font-size:0.9rem">
+          <span>${methodLabel(t.method)}</span>
+          <span>${sym}${Number(t.amount).toFixed(2)}</span>
+        </div>
+      `).join('')}
+    ` : '';
+
+    // Extra charges + takeaway
+    const extras = Array.isArray(order.extraCharges) ? order.extraCharges : [];
+    const extrasHtml = extras.length > 0 || order.takeaway ? `
+      <div class="settlement-divider"></div>
+      ${order.takeaway ? `<div class="settlement-row" style="font-size:0.9rem"><span>🥡 外带打包</span><span>+${sym}${(order.takeawayCharge || 0.20).toFixed(2)}</span></div>` : ''}
+      ${extras.map(e => `<div class="settlement-row" style="font-size:0.9rem"><span>${GC.esc(e.label)}</span><span>${e.amount >= 0 ? '+' : '−'}${sym}${Math.abs(Number(e.amount)).toFixed(2)}</span></div>`).join('')}
+    ` : '';
+
     const modal = document.getElementById('modal');
     modal.innerHTML = `
       <div class="modal-overlay">
@@ -161,11 +347,15 @@ GC.Orders = (function () {
               <div><span>时间:</span> ${new Date(order.completedAt || order.createdAt).toLocaleString('zh-CN')}</div>
               <div><span>客户:</span> ${customer}</div>
               <div><span>付款:</span> ${methodLabel(order.paymentMethod)}</div>
-              ${order.note ? `<div><span>备注:</span> ${order.note}</div>` : ''}
+              ${order.cashier ? `<div><span>收银:</span> ${GC.esc(order.cashier)}</div>` : ''}
+              ${order.note ? `<div><span>备注:</span> ${GC.esc(order.note)}</div>` : ''}
+              ${order.deliveryPlatformTotal != null ? `<div><span>平台总额:</span> ${sym}${Number(order.deliveryPlatformTotal).toFixed(2)}</div>` : ''}
             </div>
             <div class="order-items-detail">${itemsHtml}</div>
+            ${extrasHtml}
             <div class="settlement-divider"></div>
             <div class="settlement-row total"><span>合计 / Total</span><span>${sym}${order.total.toFixed(2)}</span></div>
+            ${tendersHtml}
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" id="m-close-btn">关闭</button>
@@ -181,7 +371,9 @@ GC.Orders = (function () {
     const voidBtn = document.getElementById('m-void');
     if (voidBtn) {
       voidBtn.onclick = async () => {
-        const refundMsg = order.paymentMethod === 'member_balance'
+        const hasMember = order.paymentMethod === 'member_balance'
+          || tenders.some(t => t.method === 'member_balance');
+        const refundMsg = hasMember
           ? '\n会员余额将自动退回 / Member balance will be refunded.' : '';
         const ok = await GC.confirm(
           `订单 #${order.orderNo} 将被作废${refundMsg}`,

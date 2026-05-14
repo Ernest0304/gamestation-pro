@@ -1197,6 +1197,30 @@ tr.inactive { opacity: 0.5; }
 .payment-tag.paynow { background: rgba(59,130,246,0.12); color: var(--blue); }
 .payment-tag.member_balance { background: rgba(139,92,246,0.12); color: var(--purple); }
 .payment-tag.card { background: rgba(245,158,11,0.12); color: var(--amber); }
+.payment-tag.mixed { background: rgba(168,85,247,0.12); color: #a855f7; }
+.payment-tag.grab { background: rgba(0,180,80,0.12); color: #00a043; }
+.payment-tag.foodpanda { background: rgba(217,42,118,0.12); color: #d92a76; }
+
+/* Row-type badges on Orders page (🍴 vs 🎮) */
+.row-type-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px;
+  font-size: 1rem;
+  background: var(--bg-input);
+}
+.row-type-badge.food { background: rgba(245,158,11,0.12); }
+.row-type-badge.gaming { background: rgba(59,130,246,0.15); }
+tr.gaming-row td { color: var(--text-primary); }
+
+/* Inline row tags (takeaway/grab/foodpanda) shown next to items preview */
+.row-tag {
+  display: inline-block; margin-left: 4px;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 0.7rem; font-weight: 600;
+}
+.row-tag.takeaway { background: rgba(245,158,11,0.18); color: #b45309; }
+.row-tag.grab { background: rgba(0,180,80,0.18); color: #00a043; }
+.row-tag.foodpanda { background: rgba(217,42,118,0.18); color: #d92a76; }
 
 tr.voided { opacity: 0.5; text-decoration: line-through; }
 .voided-tag {

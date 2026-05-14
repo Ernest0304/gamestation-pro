@@ -849,6 +849,91 @@ select.form-input { appearance: none; cursor: pointer;
   background: rgba(239, 68, 68, 0.08);
 }
 
+/* ===== Z-Report (daily close) ===== */
+.z-report-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.z-report-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--green), var(--cyan), var(--purple));
+}
+.z-report-card.closed::before {
+  background: linear-gradient(90deg, var(--text-muted), var(--text-muted));
+  opacity: 0.4;
+}
+.z-report-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 18px; gap: 12px; flex-wrap: wrap;
+}
+.z-report-title {
+  font-size: 1.1rem; font-weight: 700;
+  color: var(--text-primary);
+}
+.z-report-subtitle {
+  font-size: 0.78rem; color: var(--text-muted);
+  margin-top: 2px;
+}
+.z-report-card.closed .z-report-subtitle {
+  color: var(--green);
+}
+
+.z-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.z-stat {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.z-stat.cash { border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.06); }
+.z-stat.paynow { border-color: rgba(59,130,246,0.3); background: rgba(59,130,246,0.06); }
+.z-stat.member { border-color: rgba(139,92,246,0.3); background: rgba(139,92,246,0.06); }
+.z-stat.topup { border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.06); }
+.z-stat-label {
+  font-size: 0.78rem; color: var(--text-secondary);
+  font-weight: 500;
+}
+.z-stat-value {
+  font-family: var(--mono);
+  font-size: 1.4rem; font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+.z-stat.cash .z-stat-value { color: var(--green); }
+.z-stat.paynow .z-stat-value { color: var(--blue); }
+.z-stat.member .z-stat-value { color: var(--purple); }
+.z-stat.topup .z-stat-value { color: var(--amber); }
+.z-stat small { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
+
+.z-report-totals {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 12px; border-top: 1px solid var(--border);
+  font-size: 0.85rem; color: var(--text-secondary);
+  flex-wrap: wrap; gap: 8px;
+}
+.z-report-total {
+  font-size: 1.1rem;
+}
+.z-report-total strong { color: var(--cyan); font-family: var(--mono); }
+
+@media (max-width: 640px) {
+  .z-report-card { padding: 14px 16px; }
+  .z-stat-value { font-size: 1.2rem; }
+  .z-report-title { font-size: 1rem; }
+}
+
 /* ===== History tabs & chart ===== */
 .history-tabs {
   display: flex; gap: 4px; margin-bottom: 16px;

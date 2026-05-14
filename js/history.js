@@ -181,7 +181,7 @@ GC.History = (function () {
 
     // Title
     doc.setFontSize(18);
-    doc.text('GameStation Pro', 14, 20);
+    doc.text('Yuu Xiang Dam (YXD) - 郁香潭', 14, 20);
     doc.setFontSize(11);
     doc.setTextColor(100);
     doc.text(`Revenue Report - ${label}`, 14, 28);
@@ -221,7 +221,7 @@ GC.History = (function () {
       headStyles: { fillColor: [6, 182, 212], textColor: 255 },
     });
 
-    doc.save(`GameStation-Report-${label.replace(/[~/\s]/g, '_')}.pdf`);
+    doc.save(`YXD-Report-${label.replace(/[~/\s]/g, '_')}.pdf`);
     GC.toast('PDF 报表已下载', 'success');
   }
 
@@ -233,7 +233,7 @@ GC.History = (function () {
 
     // Summary sheet data
     const summaryData = [
-      ['GameStation Pro - Revenue Report'],
+      ['Yuu Xiang Dam (YXD) - Revenue Report'],
       ['Period', label],
       ['Total Sessions', filtered.length],
       ['Total Duration', fmtDur(totalTime)],
@@ -276,7 +276,7 @@ GC.History = (function () {
     ];
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
     XLSX.utils.book_append_sheet(wb, wsDetail, 'Details');
-    XLSX.writeFile(wb, `GameStation-Report-${label.replace(/[~/\s]/g, '_')}.xlsx`);
+    XLSX.writeFile(wb, `YXD-Report-${label.replace(/[~/\s]/g, '_')}.xlsx`);
     GC.toast('Excel 报表已下载', 'success');
   }
 
@@ -314,14 +314,60 @@ GC.History = (function () {
       });
     }
 
+    // Z-Report data — today's takings across F&B + gaming + top-ups, by tender
+    const today = localDateStr(new Date());
+    const z = GC.Store.getDailySummary(today);
+    const closeRecord = (GC.Store.getDailyCloses() || []).find(c => c.closeDate === today);
+    const isClosed = !!closeRecord;
+
+    const zReportHtml = `
+      <div class="z-report-card ${isClosed ? 'closed' : ''}">
+        <div class="z-report-header">
+          <div>
+            <div class="z-report-title">📊 今日营收 / Today's Takings</div>
+            <div class="z-report-subtitle">${today} · ${isClosed ? '已结账 / Closed at ' + new Date(closeRecord.closedAt).toLocaleTimeString('zh-CN', {hour:'2-digit', minute:'2-digit'}) : '未结账 / Open'}</div>
+          </div>
+          <button class="btn ${isClosed ? 'btn-secondary' : 'btn-primary'} btn-sm" id="z-close-day">
+            ${isClosed ? '查看 / View Close' : '🔒 结账 / Close Day'}
+          </button>
+        </div>
+        <div class="z-report-grid">
+          <div class="z-stat cash">
+            <span class="z-stat-label">💵 现金 / Cash</span>
+            <span class="z-stat-value">${sym}${z.cash.toFixed(2)}</span>
+          </div>
+          <div class="z-stat paynow">
+            <span class="z-stat-label">📱 PayNow</span>
+            <span class="z-stat-value">${sym}${z.paynow.toFixed(2)}</span>
+          </div>
+          <div class="z-stat member">
+            <span class="z-stat-label">💎 会员余额 / Member</span>
+            <span class="z-stat-value">${sym}${z.memberBalance.toFixed(2)}</span>
+          </div>
+          <div class="z-stat topup">
+            <span class="z-stat-label">💰 充值收款 / Top-ups</span>
+            <span class="z-stat-value">${sym}${z.topUpsCash.toFixed(2)}</span>
+            ${z.topUpsBonus > 0 ? `<small>+ ${sym}${z.topUpsBonus.toFixed(2)} 福利金 / bonus given</small>` : ''}
+          </div>
+        </div>
+        <div class="z-report-totals">
+          <span>订单 ${z.orderCount} · 游戏台 ${z.sessionCount}${z.voidedCount > 0 ? ` · 作废 ${z.voidedCount}` : ''} · 折扣 ${sym}${z.totalDiscount.toFixed(2)}</span>
+          <span class="z-report-total"><strong>总收入 / Total: ${sym}${z.totalRevenue.toFixed(2)}</strong></span>
+        </div>
+      </div>`;
+
     document.getElementById('main-content').innerHTML = `
       <div class="page-header">
-        <h2 class="page-title">历史记录 / History</h2>
+        <h2 class="page-title">报表 / Reports</h2>
         <div class="report-buttons">
           <button class="btn btn-secondary btn-sm" id="dl-pdf">📄 PDF 报表</button>
           <button class="btn btn-secondary btn-sm" id="dl-excel">📊 Excel 报表</button>
         </div>
       </div>
+
+      ${zReportHtml}
+
+      <h3 class="section-title" style="margin-top:24px">🎮 游戏台明细 / Gaming Detail</h3>
 
       <!-- Mode tabs -->
       <div class="history-tabs">
@@ -383,6 +429,10 @@ GC.History = (function () {
   }
 
   function bindEvents(filtered) {
+    // Z-Report close-day button
+    const zBtn = document.getElementById('z-close-day');
+    if (zBtn) zBtn.addEventListener('click', showCloseDayModal);
+
     // Mode tabs
     document.querySelectorAll('.history-tab').forEach(tab => {
       tab.addEventListener('click', () => {
@@ -421,6 +471,117 @@ GC.History = (function () {
 
   function destroy() {
     if (chart) { chart.destroy(); chart = null; }
+  }
+
+  /* ---- Z-Report: Close Day modal ---- */
+  async function showCloseDayModal() {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const today = localDateStr(new Date());
+    const z = GC.Store.getDailySummary(today);
+    const existing = (GC.Store.getDailyCloses() || []).find(c => c.closeDate === today);
+
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content modal-wide">
+          <div class="modal-header">
+            <h3>🔒 ${existing ? '已结账记录' : '日结 / Close Day'} — ${today}</h3>
+            <button class="modal-close" id="m-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="z-report-grid" style="margin-bottom:18px">
+              <div class="z-stat cash">
+                <span class="z-stat-label">💵 现金 / Cash 预期</span>
+                <span class="z-stat-value">${sym}${z.cash.toFixed(2)}</span>
+              </div>
+              <div class="z-stat paynow">
+                <span class="z-stat-label">📱 PayNow</span>
+                <span class="z-stat-value">${sym}${z.paynow.toFixed(2)}</span>
+              </div>
+              <div class="z-stat member">
+                <span class="z-stat-label">💎 会员余额</span>
+                <span class="z-stat-value">${sym}${z.memberBalance.toFixed(2)}</span>
+              </div>
+              <div class="z-stat topup">
+                <span class="z-stat-label">💰 充值收款</span>
+                <span class="z-stat-value">${sym}${z.topUpsCash.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div class="settlement-row" style="font-size:1rem;margin-bottom:8px">
+              <span>订单 / Orders</span><span>${z.orderCount}</span>
+            </div>
+            <div class="settlement-row" style="font-size:1rem;margin-bottom:8px">
+              <span>游戏台 / Sessions</span><span>${z.sessionCount}</span>
+            </div>
+            ${z.voidedCount > 0 ? `
+              <div class="settlement-row" style="font-size:1rem;margin-bottom:8px;color:var(--red)">
+                <span>作废 / Voided</span><span>${z.voidedCount}</span>
+              </div>` : ''}
+            ${z.totalDiscount > 0 ? `
+              <div class="settlement-row" style="font-size:1rem;margin-bottom:8px;color:var(--amber)">
+                <span>折扣总额 / Discounts</span><span>-${sym}${z.totalDiscount.toFixed(2)}</span>
+              </div>` : ''}
+            <div class="settlement-divider"></div>
+            <div class="settlement-row total" style="margin-bottom:18px">
+              <span>总收入 / Total</span><span>${sym}${z.totalRevenue.toFixed(2)}</span>
+            </div>
+
+            ${existing ? `
+              <div class="form-hint" style="margin-top:10px">
+                此日已于 ${new Date(existing.closedAt).toLocaleString('zh-CN', { hour12: false })} 由
+                ${GC.esc(existing.closedBy || '?')} 结账。
+                ${existing.actualCash != null ? `<br>实际清点现金: ${sym}${existing.actualCash.toFixed(2)} (差 ${existing.cashDifference >= 0 ? '+' : ''}${sym}${existing.cashDifference.toFixed(2)})` : ''}
+                ${existing.note ? `<br>备注: ${GC.esc(existing.note)}` : ''}
+              </div>
+            ` : `
+              <div class="form-group">
+                <label class="form-label">实际清点现金 / Actual Cash in Drawer (选填 optional)</label>
+                <div class="rate-input-group" style="max-width:240px">
+                  <span class="rate-prefix">${sym}</span>
+                  <input type="number" id="z-actual-cash" class="form-input settings-input"
+                    step="0.10" placeholder="${z.cash.toFixed(2)}"
+                    style="font-size:1.3rem;font-weight:700;width:140px;text-align:right">
+                </div>
+                <div class="form-hint">系统预期 ${sym}${z.cash.toFixed(2)} — 如有差额会自动记录</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">备注 / Note (选填)</label>
+                <input type="text" id="z-note" class="form-input" placeholder="例：员工 A 接班; 缺零钱 ...">
+              </div>
+            `}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="m-cancel">${existing ? '关闭 / Close' : '取消 / Cancel'}</button>
+            ${existing ? '' : '<button class="btn btn-primary" id="m-confirm-close">🔒 确认结账 / Confirm Close Day</button>'}
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('m-close').onclick = close;
+    document.getElementById('m-cancel').onclick = close;
+    const confirmBtn = document.getElementById('m-confirm-close');
+    if (confirmBtn) {
+      confirmBtn.onclick = async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+          const actualCashStr = document.getElementById('z-actual-cash').value.trim();
+          const actualCash = actualCashStr ? parseFloat(actualCashStr) : null;
+          const note = document.getElementById('z-note').value.trim() || null;
+          await GC.Store.closeDay(today, actualCash, note);
+          close();
+          render();
+          GC.toast('✅ 已结账 / Day closed', 'success');
+        } catch (err) {
+          btn.disabled = false;
+          GC.toast('结账失败 / Failed: ' + err.message, 'error');
+        }
+      };
+    }
   }
 
   return { render, destroy };

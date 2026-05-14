@@ -34,11 +34,15 @@ GC.Menu = (function () {
     if (allItems.length === 0) {
       rows = `<tr><td colspan="6" class="table-empty">没有商品 / No items</td></tr>`;
     } else {
-      rows = allItems.map(i => `
+      rows = allItems.map(i => {
+        const thumb = i.photoUrl
+          ? `<img src="${i.photoUrl}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:10px" onerror="this.outerHTML='<span style=&quot;font-size:1.4rem;margin-right:10px&quot;>${i.emoji}</span>'">`
+          : `<span style="font-size:1.4rem;margin-right:10px">${i.emoji}</span>`;
+        return `
         <tr class="${!i.active ? 'inactive' : ''}">
           <td class="menu-no-cell">#${i.menuNo}</td>
           <td>
-            <span style="font-size:1.4rem;margin-right:8px">${i.emoji}</span>
+            ${thumb}
             <strong>${i.nameZh}</strong>
             ${i.isFeatured ? '<span class="badge-rec-small">招牌</span>' : ''}
             <div class="menu-en">${i.nameEn || ''}</div>
@@ -50,7 +54,8 @@ GC.Menu = (function () {
             <button class="btn btn-sm" style="background:var(--bg-input);color:${i.active ? 'var(--amber)' : 'var(--green)'};border:1px solid var(--border)" data-toggle="${i.id}">${i.active ? '下架' : '上架'}</button>
             <button class="btn btn-sm" style="background:var(--bg-input);color:var(--red);border:1px solid var(--border)" data-del="${i.id}">删除</button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
     }
 
     document.getElementById('main-content').innerHTML = `
@@ -191,6 +196,16 @@ GC.Menu = (function () {
               </div>
             </div>
             <div class="form-group">
+              <label class="form-label">商品图片 / Photo URL</label>
+              <div style="display:flex;gap:10px;align-items:flex-start">
+                ${editing && editing.photoUrl ? `<img src="${editing.photoUrl}" alt="" style="width:60px;height:60px;object-fit:cover;border-radius:8px;background:var(--bg-input)">` : ''}
+                <div style="flex:1">
+                  <input type="text" id="inp-photo-url" class="form-input" value="${editing ? (editing.photoUrl || '') : ''}" placeholder="/img/menu/X.jpg 或 https://...">
+                  <div class="form-hint">图片URL或本地路径。留空显示 emoji。建议尺寸 400×400。</div>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
               <label class="form-label">
                 <input type="checkbox" id="inp-featured" ${editing && editing.isFeatured ? 'checked' : ''}>
                 标记为招牌商品（在 POS 显示"招牌"标签）
@@ -222,6 +237,7 @@ GC.Menu = (function () {
         nameEn: document.getElementById('inp-en').value.trim(),
         price: parseFloat(document.getElementById('inp-price').value),
         emoji: document.getElementById('inp-emoji').value.trim() || '🍴',
+        photoUrl: document.getElementById('inp-photo-url').value.trim() || null,
         isFeatured: document.getElementById('inp-featured').checked,
         active: document.getElementById('inp-active').checked,
       };

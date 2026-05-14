@@ -110,14 +110,19 @@ GC.POS = (function () {
     } else {
       itemCards = items.map(i => {
         const inCart = cart.find(c => c.menuItemId === i.id);
+        // Photo if uploaded/cropped; emoji fallback for missing ones.
+        // onerror swaps to emoji if the file 404s (handles legacy items)
+        const visual = i.photoUrl
+          ? `<div class="pos-item-photo"><img src="${GC.esc(i.photoUrl)}" alt="${GC.esc(i.nameZh)}" onerror="this.parentElement.innerHTML='<span class=&quot;pos-item-emoji&quot;>${i.emoji}</span>'"></div>`
+          : `<span class="pos-item-emoji">${i.emoji}</span>`;
         return `
           <div class="pos-item-card ${inCart ? 'in-cart' : ''}" data-id="${i.id}">
             ${i.isFeatured ? '<span class="pos-badge-rec">招牌</span>' : ''}
             ${inCart ? `<span class="pos-badge-qty">×${inCart.quantity}</span>` : ''}
-            <span class="pos-item-emoji">${i.emoji}</span>
+            ${visual}
             <div class="pos-item-no">#${i.menuNo}</div>
-            <div class="pos-item-name">${i.nameZh}</div>
-            <div class="pos-item-name-en">${i.nameEn}</div>
+            <div class="pos-item-name">${GC.esc(i.nameZh)}</div>
+            <div class="pos-item-name-en">${GC.esc(i.nameEn)}</div>
             <div class="pos-item-bottom">
               <div class="pos-item-price">${sym}${i.price.toFixed(2)}</div>
               <button class="pos-add-btn" data-add="${i.id}">+</button>

@@ -4,96 +4,60 @@
       <stop offset="0%" stop-color="#a01828"/>
       <stop offset="100%" stop-color="#7a0818"/>
     </radialGradient>
-    <path id="bottomArc" d="M 36 142 A 88 88 0 0 0 204 142" fill="none"/>
   </defs>
 
-  <!-- ===== Layer 1: disc + rings ===== -->
+  <!-- Disc + rings -->
   <circle cx="120" cy="120" r="115" fill="#ffffff"/>
   <circle cx="120" cy="120" r="108" fill="url(#bgRed)"/>
-  <!-- thin white inner ring -->
   <circle cx="120" cy="120" r="100" fill="none" stroke="#ffffff" stroke-width="1.5"/>
 
-  <!-- ===== Layer 2: top header (郁 · lotus · 潭) ===== -->
-  <!-- 郁 left -->
-  <text x="74" y="46" font-family="'STKaiti','Songti SC','SimSun',serif"
-        font-size="18" font-weight="700" fill="#ffffff" text-anchor="middle">郁</text>
-  <!-- 潭 right -->
-  <text x="166" y="46" font-family="'STKaiti','Songti SC','SimSun',serif"
-        font-size="18" font-weight="700" fill="#ffffff" text-anchor="middle">潭</text>
+  <!-- Top: 郁  ✻  潭 — bigger so it reads at 120px screen size -->
+  <text x="74" y="54" font-family="serif" font-size="22" font-weight="900"
+        fill="#ffffff" text-anchor="middle">郁</text>
+  <text x="166" y="54" font-family="serif" font-size="22" font-weight="900"
+        fill="#ffffff" text-anchor="middle">潭</text>
 
-  <!-- Lotus motif between 郁 and 潭 -->
-  <g transform="translate(120, 38)">
-    <!-- Outer petals -->
-    <path d="M -10 6 Q -6 -3 -2 5 Z" fill="#ffffff" opacity="0.85"/>
-    <path d="M 10 6 Q 6 -3 2 5 Z" fill="#ffffff" opacity="0.85"/>
-    <!-- Center petal -->
-    <path d="M -3 8 Q 0 -6 3 8 Q 0 6 -3 8 Z" fill="#ffffff"/>
-    <!-- Center dot (golden) -->
-    <circle cx="0" cy="4" r="1.8" fill="#fbbf24"/>
-    <!-- Side dots -->
-    <circle cx="-13" cy="3" r="1.2" fill="#ffffff" opacity="0.7"/>
-    <circle cx="13" cy="3" r="1.2" fill="#ffffff" opacity="0.7"/>
+  <!-- Lotus motif — larger, mirror-symmetric, no sub-pixel parts -->
+  <g transform="translate(120, 44)">
+    <!-- 5 petals in a fan -->
+    <ellipse cx="-9" cy="3" rx="2.5" ry="6" transform="rotate(-30 -9 3)" fill="#ffffff" opacity="0.9"/>
+    <ellipse cx="-4.5" cy="1" rx="2.5" ry="7" transform="rotate(-12 -4.5 1)" fill="#ffffff"/>
+    <ellipse cx="0" cy="0" rx="2.5" ry="8" fill="#ffffff"/>
+    <ellipse cx="4.5" cy="1" rx="2.5" ry="7" transform="rotate(12 4.5 1)" fill="#ffffff"/>
+    <ellipse cx="9" cy="3" rx="2.5" ry="6" transform="rotate(30 9 3)" fill="#ffffff" opacity="0.9"/>
+    <!-- Golden center -->
+    <circle cx="0" cy="3" r="2.4" fill="#fbbf24"/>
   </g>
 
-  <!-- ===== Layer 3: white ribbon banner for "Dessert" ===== -->
+  <!-- White ribbon banner for "Dessert" — slightly bigger, with subtle shadow -->
   <g>
-    <!-- Banner body (rounded rectangle with notch ends) -->
-    <path d="M 64 60
-             L 176 60
-             L 184 70
-             L 176 80
-             L 64 80
-             L 56 70
-             L 64 60 Z"
+    <path d="M 60 64 L 180 64 L 188 74 L 180 84 L 60 84 L 52 74 Z"
           fill="#ffffff"
-          stroke="#7a0818"
-          stroke-width="0.6"
-          opacity="0.95"/>
-    <!-- "Dessert" script text -->
-    <text x="120" y="75" font-family="'Brush Script MT','Snell Roundhand','Lucida Handwriting',cursive"
-          font-size="17" fill="#7a0818" text-anchor="middle"
-          font-style="italic" font-weight="600">Dessert</text>
+          stroke="rgba(122,8,24,0.25)" stroke-width="0.5"/>
+    <!-- Generic cursive fallback: italic serif works on every OS -->
+    <text x="120" y="80" font-family="cursive, 'Brush Script MT', serif"
+          font-size="20" fill="#7a0818" text-anchor="middle"
+          font-style="italic" font-weight="700">Dessert</text>
   </g>
 
-  <!-- ===== Layer 4: decorative leaves/branches around 香 circle ===== -->
-  <g fill="#ffffff" opacity="0.18">
-    <!-- Left branch -->
-    <path d="M 55 130 Q 60 122 65 128 Q 62 130 60 132 Z"/>
-    <path d="M 58 138 Q 64 134 68 142 Q 64 142 60 142 Z"/>
-    <!-- Right branch -->
-    <path d="M 185 130 Q 180 122 175 128 Q 178 130 180 132 Z"/>
-    <path d="M 182 138 Q 176 134 172 142 Q 176 142 180 142 Z"/>
-    <!-- Top leaves around white circle -->
-    <ellipse cx="92" cy="108" rx="3" ry="6" transform="rotate(-40 92 108)"/>
-    <ellipse cx="148" cy="108" rx="3" ry="6" transform="rotate(40 148 108)"/>
-    <!-- Bottom flourish -->
-    <path d="M 100 162 Q 120 168 140 162 Q 120 166 100 162 Z"/>
-  </g>
+  <!-- Center white circle for 香 — slightly lower so spacing balances -->
+  <circle cx="120" cy="138" r="48" fill="#ffffff"/>
+  <!-- Subtle gold inner ring to add premium accent -->
+  <circle cx="120" cy="138" r="45" fill="none" stroke="#fbbf24" stroke-width="0.7" opacity="0.5"/>
 
-  <!-- ===== Layer 5: white center circle for 香 ===== -->
-  <circle cx="120" cy="124" r="50" fill="#ffffff"/>
-  <!-- Subtle inner red ring on the white circle -->
-  <circle cx="120" cy="124" r="47" fill="none" stroke="#7a0818" stroke-width="0.8" opacity="0.3"/>
+  <!-- 香 — strong, large, generic serif (works on all OSes for CJK) -->
+  <text x="120" y="160" font-family="serif" font-size="58" font-weight="900"
+        fill="#7a0818" text-anchor="middle">香</text>
 
-  <!-- ===== Layer 6: 香 character (calligraphic) ===== -->
-  <text x="120" y="145" font-family="'STKaiti','Kaiti SC','Songti SC','SimSun',serif"
-        font-size="56" font-weight="900" fill="#7a0818" text-anchor="middle"
-        style="font-feature-settings: 'kern' 1;">香</text>
+  <!-- 甜品 — much bigger so it's actually readable -->
+  <text x="120" y="180" font-family="serif" font-size="14" font-weight="700"
+        fill="#7a0818" text-anchor="middle" letter-spacing="1.5">甜品</text>
 
-  <!-- ===== Layer 7: 甜品 below 香 (small, inside white circle) ===== -->
-  <text x="120" y="163" font-family="'STKaiti','Songti SC',serif"
-        font-size="9" font-weight="600" fill="#7a0818" text-anchor="middle"
-        letter-spacing="2.5">甜  品</text>
-
-  <!-- ===== Layer 8: bottom arc — YUU XIANG DAM 郁香潭 ===== -->
-  <text font-family="'Times New Roman',serif" font-size="9" fill="#ffffff"
-        letter-spacing="2.5" font-weight="600">
-    <textPath href="#bottomArc" startOffset="50%" text-anchor="middle">
-      YUU XIANG DAM · 郁香潭
-    </textPath>
-  </text>
-
-  <!-- ===== Layer 9: small decorative dots at bottom corners ===== -->
-  <circle cx="42" cy="142" r="1.5" fill="#ffffff" opacity="0.6"/>
-  <circle cx="198" cy="142" r="1.5" fill="#ffffff" opacity="0.6"/>
+  <!-- Bottom: brand name as ONE line (no microscopic arc text).
+       Sized to actually read at 120px display. -->
+  <text x="120" y="208" font-family="serif" font-size="13" font-weight="700"
+        fill="#ffffff" text-anchor="middle" letter-spacing="1">郁香潭</text>
+  <text x="120" y="224" font-family="serif" font-size="9" font-weight="500"
+        fill="#ffffff" text-anchor="middle" letter-spacing="2.5"
+        opacity="0.85">YUU XIANG DAM</text>
 </svg>

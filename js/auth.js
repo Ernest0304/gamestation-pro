@@ -40,6 +40,9 @@ GC.Auth = (function () {
       btn.textContent = '登录中...';
       errorEl.style.display = 'none';
 
+      // Mark attempt time so app.js can detect late SIGNED_IN after our timeout fires
+      if (GC._lastAuthAttempt) GC._lastAuthAttempt();
+
       // Wrap signInWithPassword in a hard 8s timeout — if Supabase auth network
       // request stalls (we've seen this in some preview environments / weak wifi),
       // we want to re-enable the button so the user can retry instead of staring

@@ -195,13 +195,30 @@ window.GC = window.GC || {};
     GC.Auth.renderLogin();
   }
 
+  /* ---- Auth attempt tracking ---- */
+  // Used to detect late SIGNED_IN events that arrive AFTER the 8s auth timeout
+  // already fired (per IT audit S1-B — late events were silently auto-booting).
+  GC._authAttemptStart = null;
+  GC._lastAuthAttempt = function () {
+    GC._authAttemptStart = Date.now();
+  };
+
   /* ---- Init ---- */
   async function init() {
     // Listen for auth changes (handles login/logout after initial load)
     GC.supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
+        // If the user already gave up on a stuck login (8s+ since they clicked),
+        // surface that the late success actually arrived rather than silently
+        // booting the dashboard.
+        const elapsed = GC._authAttemptStart ? Date.now() - GC._authAttemptStart : 0;
+        if (elapsed > 8000 && !booted) {
+          GC.toast?.(`登录成功（网络较慢，${Math.round(elapsed/1000)}秒）/ Logged in (slow network)`, 'success');
+        }
+        GC._authAttemptStart = null;
         await bootApp();
       } else if (event === 'SIGNED_OUT') {
+        GC._authAttemptStart = null;
         showLogin();
       } else if (event === 'INITIAL_SESSION') {
         // Handled below by getSession — ignore here to avoid double-boot

@@ -178,8 +178,13 @@ GC.Store = (function () {
   }
 
   /* ========== Init ========== */
+  // Idempotency: if bootApp's timeout fires and the user retries, we don't want
+  // to launch a second Promise.all OR subscribe to realtime twice (would cause
+  // duplicate events + cache thrashing per IT audit S1-A).
+  let _initPromise = null;
+  let _subscribed = false;
 
-  async function init() {
+  async function _runInit() {
     sb = GC.supabase;
     const [
       settingsRes, stationsRes, membersRes, sessionsRes, topUpsRes,
@@ -206,7 +211,23 @@ GC.Store = (function () {
     _cache.orders = (ordersRes.data || []).map(orderToApp);
     _cache.orderItems = (orderItemsRes.data || []).map(orderItemToApp);
 
-    subscribeRealtime();
+    if (!_subscribed) {
+      _subscribed = true;
+      subscribeRealtime();
+    }
+  }
+
+  async function init() {
+    // If a previous init is already in-flight or completed, reuse that promise.
+    // This handles: bootApp times out → user retries → second Store.init() call
+    // returns the same in-flight promise instead of starting a parallel run.
+    if (_initPromise) return _initPromise;
+    _initPromise = _runInit().catch((err) => {
+      // On hard failure, allow a fresh retry next time.
+      _initPromise = null;
+      throw err;
+    });
+    return _initPromise;
   }
 
   /* ========== Realtime ========== */

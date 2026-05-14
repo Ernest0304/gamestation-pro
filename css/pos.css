@@ -67,6 +67,36 @@ body.pos-mode .modal-body {
   color: #2a1f17;
 }
 
+/* Rate input group (used in cash modal, settings, top-up, discount, menu admin)
+   needs LIGHT styling when modal is rendered inside body.pos-mode.
+   Without this override the input keeps the dark gaming-mode bg and the
+   user-typed dark text becomes invisible against it. */
+body.pos-mode .rate-input-group {
+  background: #ffffff;
+  border-color: #f0d9b8;
+  border-width: 1.5px;
+  box-shadow: inset 0 1px 2px rgba(122, 8, 24, 0.04);
+}
+body.pos-mode .rate-input-group:focus-within {
+  border-color: #d97706;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.15);
+}
+body.pos-mode .rate-input-group .rate-prefix,
+body.pos-mode .rate-input-group .rate-suffix {
+  background: #fef3e2;
+  color: #92775a;
+  font-weight: 600;
+}
+body.pos-mode .rate-input-group .form-input.settings-input {
+  background: transparent;
+  color: #2a1f17;
+  font-weight: 700;
+}
+body.pos-mode .rate-input-group .form-input.settings-input::placeholder {
+  color: #c4ad8a;
+  opacity: 1;
+}
+
 /* Toast still readable on light bg */
 body.pos-mode .toast {
   background: #fff;

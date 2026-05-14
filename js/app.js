@@ -249,10 +249,44 @@ window.GC = window.GC || {};
     });
   }
 
+  // Re-place the logout button between body (mobile floating) and the
+  // navbar (desktop inline) depending on viewport. Without this, a logout
+  // button mounted in body during a mobile-sized devtools simulation
+  // stays there when the viewport grows → ends up at bottom of page.
+  function placeLogoutButton() {
+    const logoutBtn = document.getElementById('logout-btn');
+    if (!logoutBtn) return;
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    if (isMobile) {
+      if (logoutBtn.parentNode !== document.body) {
+        logoutBtn.style.marginLeft = '';
+        document.body.appendChild(logoutBtn);
+      }
+    } else {
+      const navLinks = document.querySelector('.nav-links');
+      if (navLinks && logoutBtn.parentNode !== navLinks) {
+        logoutBtn.style.marginLeft = '12px';
+        navLinks.appendChild(logoutBtn);
+      }
+    }
+  }
+
   // Listen for programmatic branch changes (from /admin or hotkey)
   window.addEventListener('gc:branch-change', () => {
     renderBranchSwitcher();
     if (GC._currentView && views[GC._currentView]) views[GC._currentView].render();
+  });
+
+  // Re-evaluate floating-vs-inline placement on viewport resize / orientation
+  // change. Handles devtools device-mode swapping AND real device rotation.
+  // Debounced so we don't thrash during drag-resize.
+  let _resizePlacementTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_resizePlacementTimer);
+    _resizePlacementTimer = setTimeout(() => {
+      renderBranchSwitcher();
+      placeLogoutButton();
+    }, 120);
   });
 
   /* ---- App boot ---- */

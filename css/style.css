@@ -798,32 +798,73 @@ select.form-input { appearance: none; cursor: pointer;
   .player-row { padding: 12px; }
 }
 @media (max-width: 640px) {
-  /* Navbar: bottom tab bar on mobile */
+  /* Mobile layout (Ernest 2026-05-14 — "手机界面需要优化"):
+     - Top strip (fixed): branch switcher (left) + logout (right) — utility row
+     - Bottom navbar (fixed): 7 nav tabs only, evenly distributed
+     - Main content: padded between the two strips, scrolls
+     Branch switcher + logout were getting stuffed into the bottom navbar
+     by the JS injector → flex-wrapped into ugly extra rows. Floating them
+     to the top corners makes the bottom a clean tab bar. */
   .navbar {
     position: fixed; top: auto; bottom: 0; left: 0; right: 0;
-    height: auto; padding: 6px 8px;
+    height: auto; padding: 4px 4px;
     border-bottom: none; border-top: 1px solid var(--border);
-    flex-wrap: wrap; justify-content: center; gap: 0;
+    background: rgba(12, 16, 23, 0.96);
+    backdrop-filter: blur(20px);
+    flex-wrap: nowrap; justify-content: stretch; gap: 0;
+  }
+  body.pos-mode .navbar {
+    background: rgba(255, 251, 245, 0.96);
+    border-top-color: rgba(122, 8, 24, 0.12);
   }
   .nav-brand { display: none; }
-  /* If you'd rather show just the logo on mobile (top bar), comment out the line above */
+
   .nav-links {
     display: flex; width: 100%; justify-content: space-around; gap: 0;
   }
   .nav-link {
-    padding: 6px 4px; font-size: 0.78rem;
+    padding: 6px 2px; font-size: 0.74rem;
     display: flex; flex-direction: column; align-items: center; gap: 1px;
-    flex: 1; text-align: center;
+    flex: 1 1 0; min-width: 0; text-align: center;
+    white-space: nowrap;
   }
-  .nav-en { font-size: 0.6rem; opacity: 0.7; }
+  .nav-cn { white-space: nowrap; font-size: 0.85rem; }
+  .nav-en { font-size: 0.58rem; opacity: 0.7; white-space: nowrap; }
+
+  /* Branch chip floats top-left (was getting flex-wrapped into bottom nav) */
+  .branch-switcher {
+    position: fixed; top: 8px; left: 8px;
+    z-index: 95; margin: 0;
+    padding: 5px 10px; font-size: 0.74rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  }
+  body.pos-mode .branch-switcher {
+    box-shadow: 0 2px 10px rgba(122, 8, 24, 0.15);
+  }
+  .branch-switcher .branch-icon { font-size: 0.82rem; }
+
+  /* Logout floats top-right */
   #logout-btn {
-    padding: 8px 6px; font-size: 0.72rem; border: none;
-    flex: 0 0 auto;
+    position: fixed; top: 8px; right: 8px;
+    z-index: 95;
+    padding: 6px 12px; font-size: 0.72rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
   }
+  body.pos-mode #logout-btn {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(122, 8, 24, 0.15);
+    box-shadow: 0 2px 10px rgba(122, 8, 24, 0.12);
+  }
+
   .main-content {
-    margin-top: 0; margin-bottom: 56px;
-    padding: 16px 14px;
+    margin-top: 0; margin-bottom: 62px;
+    padding: 52px 14px 16px;  /* top padding clears the floating chip + logout */
   }
+  /* Prevent text overflow per tab */
+  .nav-link { overflow: hidden; }
   /* Stats bar: 2x2 grid */
   .stats-bar {
     display: grid; grid-template-columns: 1fr 1fr;
@@ -855,6 +896,18 @@ select.form-input { appearance: none; cursor: pointer;
   .page-title { font-size: 1.1rem; }
   /* Login page: no bottom bar margin */
   .login-page { min-height: 100vh; margin-bottom: -56px; }
+}
+
+/* Very narrow phones (≤400px): drop the English under-label so 7 tabs
+   fit comfortably; shrink branch chip name with ellipsis. */
+@media (max-width: 400px) {
+  .nav-en { display: none; }
+  .nav-link { padding: 8px 2px; }
+  .nav-cn { font-size: 0.78rem; }
+  .branch-switcher .branch-name {
+    max-width: 80px; overflow: hidden; text-overflow: ellipsis;
+    display: inline-block; vertical-align: bottom;
+  }
 }
 
 /* ===== Scrollbar ===== */

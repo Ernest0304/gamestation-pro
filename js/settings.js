@@ -215,17 +215,31 @@ GC.Settings = (function () {
     });
 
     document.getElementById('clear-history').addEventListener('click', async () => {
-      if (confirm('确定清除所有历史记录吗？此操作不可撤销。\nClear all session history? This cannot be undone.')) {
+      const ok = await GC.confirm(
+        '确定清除所有游戏台历史记录吗？\n此操作不可撤销。\n\nClear all session history? This cannot be undone.',
+        { title: '清除历史 / Clear History', danger: true, confirmText: '清除 / Clear' }
+      );
+      if (ok) {
         await GC.Store.clearSessions();
         GC.toast('已清除 / Cleared', 'success');
       }
     });
 
     document.getElementById('reset-all').addEventListener('click', async () => {
-      if (confirm('确定重置所有数据吗？\n(包括设置、会员、历史)\n\nReset ALL data (settings, members, history)?')) {
-        await GC.Store.resetAll();
+      const typed = await GC.prompt(
+        '⚠️ 危险操作：将清空所有订单、游戏台、充值记录。\n会员将被软删除（数据保留）。\n\n请输入 RESET 确认。',
+        { title: '🛑 重置所有数据 / Reset All', placeholder: 'RESET' }
+      );
+      if (typed !== 'RESET') {
+        if (typed !== null) GC.toast('未输入 RESET — 已取消 / Cancelled', 'error');
+        return;
+      }
+      try {
+        await GC.Store.resetAll('RESET');
         GC.toast('已重置 / Reset done', 'success');
         render();
+      } catch (e) {
+        GC.toast(e.message, 'error');
       }
     });
 
@@ -247,7 +261,11 @@ GC.Settings = (function () {
     document.getElementById('import-file').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      if (!confirm('导入将覆盖所有数据，确定继续？\nImporting will overwrite all data. Continue?')) return;
+      const ok = await GC.confirm(
+        '导入将覆盖所有数据。\nImporting will overwrite all data.',
+        { title: '导入备份 / Import Backup', danger: true, confirmText: '导入 / Import' }
+      );
+      if (!ok) return;
       try {
         const text = await file.text();
         await GC.Store.importData(text);

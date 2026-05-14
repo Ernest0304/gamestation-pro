@@ -205,7 +205,11 @@ GC.Members = (function () {
     document.getElementById('topup').addEventListener('click', () => showTopUpModal(id));
     document.getElementById('edit-member').addEventListener('click', () => showEditModal(id));
     document.getElementById('regen-code').addEventListener('click', async () => {
-      if (!confirm('重新生成绑定码？旧的将立即失效。\nRegenerate bind code? Old one becomes invalid.')) return;
+      const ok = await GC.confirm(
+        '重新生成绑定码？\n旧的绑定码将立即失效。\n\nOld bind code becomes invalid immediately.',
+        { title: '重新生成 / Regenerate', danger: true, confirmText: '重新生成 / Regenerate' }
+      );
+      if (!ok) return;
       await GC.Store.regenerateBindCode(id);
       renderDetail(id);
       GC.toast('已生成新绑定码 / New code generated', 'success');
@@ -214,12 +218,21 @@ GC.Members = (function () {
       const sym = settings.currencySymbol;
       let warning = `确定删除会员 "${m.name}"？\nDelete this member?`;
       if (m.balance > 0) {
-        warning += `\n\n⚠️  当前余额 / Balance: ${sym}${m.balance.toFixed(2)} 必须先退款或扣零。\nMust refund or zero out balance first.`;
+        warning += `\n\n⚠️  当前余额 / Balance: ${sym}${m.balance.toFixed(2)}\n必须先退款或扣零 / Must refund or zero out first.`;
       }
-      if (!confirm(warning)) return;
+      const ok = await GC.confirm(warning, {
+        title: '删除会员 / Delete Member',
+        danger: true,
+        confirmText: '删除 / Delete',
+      });
+      if (!ok) return;
+      const reason = await GC.prompt('删除原因 (选填) / Reason (optional):', {
+        title: '记录原因 / Reason',
+        placeholder: '例：合并账户、误添加 ...',
+      });
+      if (reason === null) return;  // cancelled at reason step
       try {
-        // soft-delete (archive) — preserves member history per owner policy
-        await GC.Store.deleteMember(id, { reason: prompt('删除原因 / Reason (optional):') || 'manual' });
+        await GC.Store.deleteMember(id, { reason: reason || 'manual' });
         renderList();
         GC.toast('已存档 / Archived', 'success');
       } catch (e) {
@@ -273,7 +286,7 @@ GC.Members = (function () {
       const name = document.getElementById('inp-name').value.trim();
       const phone = document.getElementById('inp-phone').value.trim();
       const tier = document.getElementById('inp-tier').value;
-      if (!name) { alert('请输入姓名 / Name required'); return; }
+      if (!name) { GC.toast('请输入姓名 / Name required', 'error'); return; }
 
       const okBtn = document.getElementById('m-ok');
       okBtn.disabled = true; // debounce
@@ -344,7 +357,7 @@ GC.Members = (function () {
       const name = document.getElementById('inp-name').value.trim();
       const phone = document.getElementById('inp-phone').value.trim();
       const tier = document.getElementById('inp-tier').value;
-      if (!name) { alert('请输入姓名 / Name required'); return; }
+      if (!name) { GC.toast('请输入姓名 / Name required', 'error'); return; }
       await GC.Store.updateMember(id, { name, phone, tier });
       close();
       renderDetail(id);

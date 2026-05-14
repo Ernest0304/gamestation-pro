@@ -498,7 +498,11 @@ GC.Dashboard = (function () {
           if (!mid) { GC.toast('请选择会员 / Please select a member', 'error'); okBtn.disabled = false; return; }
           const m = GC.Store.getMember(mid);
           if (m.balance <= 0) {
-            if (!confirm(`${m.name} 当前余额为 ${sym}0。仍然开桌吗？（需先充值）`)) { okBtn.disabled = false; return; }
+            const ok2 = await GC.confirm(
+              `${m.name} 当前余额为 ${sym}0。\n仍然开桌吗？（需先充值）\n\nMember balance is ${sym}0. Open anyway? (Top-up needed)`,
+              { title: '余额为 0 / Zero Balance', confirmText: '继续开桌 / Open Anyway' }
+            );
+            if (!ok2) { okBtn.disabled = false; return; }
           }
           await GC.Store.openSession({
             stationId: st.id, stationName: st.name, stationType: st.type,
@@ -646,7 +650,11 @@ GC.Dashboard = (function () {
     const session = GC.Store.getSessions().find(s => s.id === sessionId);
     if (!session) return;
     const { rate } = GC.Store.getRateFor(session.stationType, null);
-    if (!confirm(`加 1 小时？\n+1 hour for ${session.guestName || '散客'}?\n\n费用 / Cost: ${sym}${rate.toFixed(2)}`)) return;
+    const okExt = await GC.confirm(
+      `${session.guestName || '散客'} 加 1 小时\n费用 / Cost: ${sym}${rate.toFixed(2)}`,
+      { title: '加时 / Extend +1h', confirmText: '加时 / Add 1h' }
+    );
+    if (!okExt) return;
     await GC.Store.extendWalkIn(sessionId, 1);
     // Reset warning state for this session
     _warned.delete(sessionId);

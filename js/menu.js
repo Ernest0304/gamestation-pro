@@ -124,7 +124,11 @@ GC.Menu = (function () {
       b.addEventListener('click', async () => {
         const id = b.dataset.del;
         const item = GC.Store.getMenuItem(id);
-        if (!confirm(`确定删除 "${item.nameZh}"？/ Delete?`)) return;
+        const ok = await GC.confirm(
+          `确定删除 "${item.nameZh}"？\nDelete this menu item?`,
+          { title: '删除商品 / Delete Item', danger: true, confirmText: '删除 / Delete' }
+        );
+        if (!ok) return;
         await GC.Store.deleteMenuItem(id);
         GC.toast('已删除', 'success');
         render();

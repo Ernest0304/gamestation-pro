@@ -181,7 +181,13 @@ GC.Orders = (function () {
     const voidBtn = document.getElementById('m-void');
     if (voidBtn) {
       voidBtn.onclick = async () => {
-        if (!confirm(`作废订单 #${order.orderNo}？\n${order.paymentMethod === 'member_balance' ? '会员余额将被退回。' : ''}\n\nVoid this order? ${order.paymentMethod === 'member_balance' ? 'Member balance will be refunded.' : ''}`)) return;
+        const refundMsg = order.paymentMethod === 'member_balance'
+          ? '\n会员余额将自动退回 / Member balance will be refunded.' : '';
+        const ok = await GC.confirm(
+          `订单 #${order.orderNo} 将被作废${refundMsg}`,
+          { title: '作废订单 / Void Order', danger: true, confirmText: '作废 / Void' }
+        );
+        if (!ok) return;
         await GC.Store.voidOrder(orderId);
         GC.toast('已作废 / Voided', 'success');
         close();

@@ -872,7 +872,7 @@ GC.Store = (function () {
    * payment: { method: 'cash'|'paynow'|'member_balance'|'card', memberId? }
    * Returns the completed order.
    */
-  async function createOrder({ memberId, guestName, cart, payment, note, cashier }) {
+  async function createOrder({ memberId, guestName, cart, payment, note, cashier, discount: discountInput }) {
     if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
 
     // Snapshot items
@@ -894,8 +894,23 @@ GC.Store = (function () {
     });
 
     const subtotal = round2(items.reduce((s, i) => s + i.subtotal, 0));
-    const discount = 0; // no member discount on food in Phase 1
-    const total = round2(subtotal - discount);
+    // Manual discount (from cashier in POS UI)
+    let discountAmt = 0;
+    let discountNote = null;
+    if (discountInput && (discountInput.amount > 0 || discountInput.value > 0)) {
+      if (discountInput.amount != null) {
+        discountAmt = round2(Math.min(subtotal, discountInput.amount));
+      } else if (discountInput.type === 'percent') {
+        discountAmt = round2(subtotal * (discountInput.value / 100));
+      } else if (discountInput.type === 'fixed') {
+        discountAmt = round2(Math.min(subtotal, discountInput.value));
+      }
+      const tag = discountInput.type === 'percent'
+        ? `${discountInput.value}%`
+        : `$${discountInput.value}`;
+      discountNote = `折扣 ${tag}${discountInput.reason ? ' · ' + discountInput.reason : ''}`;
+    }
+    const total = round2(Math.max(0, subtotal - discountAmt));
 
     // If member balance payment, check sufficient balance
     if (payment.method === 'member_balance') {
@@ -907,14 +922,17 @@ GC.Store = (function () {
       }
     }
 
-    // Insert order
+    // Insert order — combine cashier note + discount note
+    const combinedNote = [note, discountNote].filter(Boolean).join(' | ') || null;
     const orderRow = {
       member_id: memberId || null,
       guest_name: guestName || null,
-      subtotal, discount, total,
+      subtotal,
+      discount: discountAmt,
+      total,
       payment_method: payment.method,
       status: 'completed',
-      note: note || null,
+      note: combinedNote,
       cashier: cashier || null,
       completed_at: new Date().toISOString(),
     };
@@ -926,17 +944,31 @@ GC.Store = (function () {
     const { data: itemsData, error: itemsErr } = await sb.from('order_items').insert(itemRows).select();
     if (itemsErr) throw itemsErr;
 
+    // Audit log if discount was applied (so accountant can review at month-end)
+    if (discountAmt > 0) {
+      try {
+        const { data: { user } } = await sb.auth.getUser();
+        await sb.from('audit_log').insert({
+          action: 'order_discount',
+          actor_email: user?.email || null,
+          before_state: { order_no: orderData.order_no, subtotal },
+          after_state: { discount: discountAmt, total, ...discountInput },
+          note: discountNote,
+        });
+      } catch (e) { console.warn('audit failed', e); }
+    }
+
     // Cache
     const order = orderToApp(orderData);
     _cache.orders.unshift(order);
     const orderItems = (itemsData || []).map(orderItemToApp);
     _cache.orderItems.push(...orderItems);
 
-    // Deduct from member balance if applicable
+    // Deduct from member balance atomically (race-free)
     if (payment.method === 'member_balance' && memberId) {
       const m = getMember(memberId);
+      await chargeBalance(memberId, -total, `order_${order.orderNo}`);
       await updateMember(memberId, {
-        balance: Math.max(0, m.balance - total),
         totalSpent: m.totalSpent + total,
       });
     }

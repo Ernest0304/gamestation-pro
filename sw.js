@@ -1,51 +1,24 @@
-const CACHE_NAME = 'gamestation-v9';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/css/style.css',
-  '/css/pos.css',
-  '/js/supabase-config.js',
-  '/js/store.js',
-  '/js/auth.js',
-  '/js/dashboard.js',
-  '/js/history.js',
-  '/js/members.js',
-  '/js/settings.js',
-  '/js/pos.js',
-  '/js/menu.js',
-  '/js/orders.js',
-  '/js/app.js',
-  '/manifest.json',
-];
+// SELF-DESTRUCT: this service worker exists only to unregister itself.
+// Cause: repeated stale-cache issues on iPad / Safari prevented users from
+// seeing new deploys. Until we revisit a proper offline strategy, all caching
+// is delegated to Vercel's HTTP cache-control headers (already configured).
 
-self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+  e.waitUntil((async () => {
+    // Delete every cache we ever created
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+    // Unregister this very SW
+    await self.registration.unregister();
+    // Force-reload all controlled pages so they pick up fresh assets without SW
+    const clients = await self.clients.matchAll({ type: 'window' });
+    for (const c of clients) c.navigate(c.url);
+  })());
 });
 
-self.addEventListener('fetch', (e) => {
-  // Network-first for API calls, cache-first for static assets
-  if (e.request.url.includes('supabase.co')) {
-    return; // Let Supabase requests go through normally
-  }
-  e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        const clone = res.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
-        return res;
-      })
-      .catch(() => caches.match(e.request))
-  );
-});
+// While alive, do not intercept anything — let network handle all requests.
+self.addEventListener('fetch', () => {});

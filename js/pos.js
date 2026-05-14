@@ -11,12 +11,26 @@ GC.POS = (function () {
   let cart = [];   // [{ menuItemId, name, emoji, menuNo, unitPrice, quantity, note }]
   let selectedMemberId = null;
   let guestName = '';
+  // Discount applied to cart (cleared on checkout/cart-clear)
+  // { type: 'percent'|'fixed', value: number, reason: string }
+  let discount = null;
 
   function tierIcon(t) { return ({ platinum: '💎', silver: '🥈', regular: '👤' })[t] || '👤'; }
   function tierLabel(t) { return ({ platinum: 'Platinum', silver: 'Silver', regular: 'Regular' })[t] || ''; }
 
-  function cartTotal() {
+  function cartSubtotal() {
     return cart.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
+  }
+  function discountAmount() {
+    if (!discount) return 0;
+    const sub = cartSubtotal();
+    if (discount.type === 'percent') {
+      return Math.min(sub, Math.round(sub * (discount.value / 100) * 100) / 100);
+    }
+    return Math.min(sub, Math.round(discount.value * 100) / 100);
+  }
+  function cartTotal() {
+    return Math.max(0, Math.round((cartSubtotal() - discountAmount()) * 100) / 100);
   }
   function cartCount() {
     return cart.reduce((s, c) => s + c.quantity, 0);
@@ -59,6 +73,7 @@ GC.POS = (function () {
     cart = [];
     selectedMemberId = null;
     guestName = '';
+    discount = null;
     render();
   }
 
@@ -130,6 +145,8 @@ GC.POS = (function () {
   }
 
   function renderCartPanel(sym) {
+    const subtotal = cartSubtotal();
+    const discountVal = discountAmount();
     const total = cartTotal();
     const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
 
@@ -139,7 +156,7 @@ GC.POS = (function () {
           <div class="pos-cart-item">
             <span class="pos-ci-emoji">${c.emoji}</span>
             <div class="pos-ci-info">
-              <div class="pos-ci-name">${c.name}</div>
+              <div class="pos-ci-name">${GC.esc(c.name)}</div>
               <div class="pos-ci-meta">#${c.menuNo} · ${sym}${c.unitPrice.toFixed(2)}</div>
             </div>
             <div class="pos-ci-qty">
@@ -194,7 +211,23 @@ GC.POS = (function () {
 
         <div class="pos-totals-block">
           <div class="pos-tr"><span>商品 / Items</span><span>${cartCount()}</span></div>
-          <div class="pos-tr"><span>小计 / Subtotal</span><span>${sym}${total.toFixed(2)}</span></div>
+          <div class="pos-tr"><span>小计 / Subtotal</span><span>${sym}${subtotal.toFixed(2)}</span></div>
+          ${discount ? `
+            <div class="pos-tr discount-line">
+              <span>
+                折扣 / Discount
+                <small>(${discount.type === 'percent' ? discount.value + '%' : sym + discount.value.toFixed(2)}${discount.reason ? ' · ' + GC.esc(discount.reason) : ''})</small>
+                <button class="pos-discount-remove" id="pos-discount-remove" title="移除折扣">×</button>
+              </span>
+              <span class="discount-amount">−${sym}${discountVal.toFixed(2)}</span>
+            </div>
+          ` : `
+            <div class="pos-discount-row">
+              <button class="pos-discount-btn" id="pos-add-discount" ${!canCheckout ? 'disabled' : ''}>
+                🏷️ 加折扣 / Add Discount
+              </button>
+            </div>
+          `}
           <div class="pos-tr grand">
             <span>应收 / Total</span>
             <span>${sym}${total.toFixed(2)}</span>
@@ -249,10 +282,17 @@ GC.POS = (function () {
 
     // Clear cart
     const clearBtn = document.getElementById('pos-cart-clear');
-    if (clearBtn) clearBtn.addEventListener('click', () => {
+    if (clearBtn) clearBtn.addEventListener('click', async () => {
       if (cart.length === 0) return;
-      if (confirm('清空购物车？/ Clear cart?')) clearCart();
+      const ok = await GC.confirm('清空购物车？\nClear cart?', { danger: true, confirmText: '清空 / Clear' });
+      if (ok) clearCart();
     });
+
+    // Discount
+    const discBtn = document.getElementById('pos-add-discount');
+    if (discBtn) discBtn.addEventListener('click', showDiscountModal);
+    const discRm = document.getElementById('pos-discount-remove');
+    if (discRm) discRm.addEventListener('click', () => { discount = null; render(); });
 
     // Customer
     const pickBtn = document.getElementById('pos-pick-member');
@@ -363,6 +403,169 @@ GC.POS = (function () {
     bindPickRows();
   }
 
+  /* ---- Discount modal ---- */
+  function showDiscountModal() {
+    const sym = GC.Store.getSettings().currencySymbol;
+    const subtotal = cartSubtotal();
+    if (subtotal <= 0) {
+      GC.toast('购物车空空 / Cart is empty', 'error');
+      return;
+    }
+
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content modal-discount">
+          <div class="modal-header">
+            <h3>🏷️ 折扣 / Discount</h3>
+            <button class="modal-close" id="m-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="discount-current">
+              <span>小计 / Subtotal</span>
+              <span class="discount-sub">${sym}${subtotal.toFixed(2)}</span>
+            </div>
+
+            <div class="discount-type-tabs">
+              <button class="discount-tab-btn active" data-mode="percent">% 百分比</button>
+              <button class="discount-tab-btn" data-mode="fixed">${sym} 固定金额</button>
+            </div>
+
+            <div class="form-group" style="margin-top:14px">
+              <label class="form-label">数额 / Amount</label>
+              <div class="rate-input-group" style="max-width:200px">
+                <span class="rate-prefix" id="disc-prefix">%</span>
+                <input type="number" id="disc-value" class="form-input settings-input" min="0" step="1" placeholder="0" autofocus>
+              </div>
+              <div class="discount-quick" style="margin-top:8px">
+                <button class="discount-quick-btn" data-quick="5">5%</button>
+                <button class="discount-quick-btn" data-quick="10">10%</button>
+                <button class="discount-quick-btn" data-quick="15">15%</button>
+                <button class="discount-quick-btn" data-quick="20">20%</button>
+                <button class="discount-quick-btn" data-quick="50">50%</button>
+                <button class="discount-quick-btn" data-quick="100">免单 Free</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">原因 / Reason</label>
+              <select id="disc-reason" class="form-input">
+                <option value="">— 选择或自定义 / pick or custom —</option>
+                <option value="vip">VIP 优惠</option>
+                <option value="staff">员工招待</option>
+                <option value="complaint">客诉补偿</option>
+                <option value="comp">朋友/家人</option>
+                <option value="promo">促销活动</option>
+                <option value="other">其他 (填备注)</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="disc-note-group" style="display:none">
+              <label class="form-label">备注 / Note</label>
+              <input type="text" id="disc-note" class="form-input" placeholder="例：常客 8 折">
+            </div>
+
+            <div class="discount-preview" id="disc-preview"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
+            <button class="btn btn-primary" id="m-ok" disabled>应用折扣 / Apply</button>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+
+    let mode = 'percent';
+    const valInput = document.getElementById('disc-value');
+    const prefix = document.getElementById('disc-prefix');
+    const preview = document.getElementById('disc-preview');
+    const okBtn = document.getElementById('m-ok');
+    const reasonSel = document.getElementById('disc-reason');
+    const noteGroup = document.getElementById('disc-note-group');
+
+    const updatePreview = () => {
+      const v = parseFloat(valInput.value) || 0;
+      if (v <= 0) {
+        preview.innerHTML = '';
+        okBtn.disabled = true;
+        return;
+      }
+      let off;
+      if (mode === 'percent') {
+        if (v > 100) { preview.innerHTML = '<div class="discount-warn">百分比不可超过 100% / Max 100%</div>'; okBtn.disabled = true; return; }
+        off = subtotal * (v / 100);
+      } else {
+        off = Math.min(subtotal, v);
+      }
+      const newTotal = Math.max(0, subtotal - off);
+      preview.innerHTML = `
+        <div class="discount-preview-card">
+          <div>原价 / Subtotal: <strong>${sym}${subtotal.toFixed(2)}</strong></div>
+          <div>折扣 / Off: <strong style="color:var(--red)">−${sym}${off.toFixed(2)}</strong></div>
+          <div class="summary-divider"></div>
+          <div>应收 / Total: <strong class="balance-after">${sym}${newTotal.toFixed(2)}</strong></div>
+        </div>`;
+      okBtn.disabled = false;
+    };
+
+    modal.querySelectorAll('.discount-tab-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        modal.querySelectorAll('.discount-tab-btn').forEach(x => x.classList.toggle('active', x === b));
+        mode = b.dataset.mode;
+        prefix.textContent = mode === 'percent' ? '%' : sym;
+        // Update quick btns
+        modal.querySelectorAll('.discount-quick-btn').forEach(qb => {
+          const q = qb.dataset.quick;
+          qb.textContent = mode === 'percent'
+            ? (q === '100' ? '免单 Free' : q + '%')
+            : sym + q;
+        });
+        updatePreview();
+      });
+    });
+
+    valInput.addEventListener('input', updatePreview);
+
+    modal.querySelectorAll('.discount-quick-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        valInput.value = b.dataset.quick;
+        updatePreview();
+      });
+    });
+
+    reasonSel.addEventListener('change', () => {
+      noteGroup.style.display = reasonSel.value === 'other' ? 'block' : 'none';
+    });
+
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('m-close').onclick = close;
+    document.getElementById('m-cancel').onclick = close;
+    okBtn.onclick = async () => {
+      const v = parseFloat(valInput.value) || 0;
+      if (v <= 0) return;
+      if (mode === 'percent' && v > 100) return;
+      const reasonKey = reasonSel.value;
+      const reasonLabels = {
+        vip: 'VIP 优惠',
+        staff: '员工招待',
+        complaint: '客诉补偿',
+        comp: '朋友/家人',
+        promo: '促销活动',
+      };
+      let reason = reasonLabels[reasonKey] || '';
+      if (reasonKey === 'other') {
+        reason = (document.getElementById('disc-note').value || '').trim() || 'other';
+      }
+      discount = { type: mode, value: v, reason };
+      close();
+      render();
+      GC.toast(
+        mode === 'percent' ? `已应用 ${v}% 折扣` : `已应用 ${sym}${v} 折扣`,
+        'success'
+      );
+    };
+  }
+
   /* ---- Checkout ---- */
   async function checkout(method) {
     if (cart.length === 0) return;
@@ -377,7 +580,11 @@ GC.POS = (function () {
     // Confirm
     const memberName = selectedMemberId ? GC.Store.getMember(selectedMemberId).name : null;
     const methodLabel = ({ cash: '现金 Cash', paynow: 'PayNow', member_balance: `会员余额 (${memberName})` })[method];
-    if (!confirm(`确认结账？\nConfirm checkout?\n\n金额: ${sym}${total.toFixed(2)}\n方式: ${methodLabel}`)) return;
+    const ok = await GC.confirm(
+      `金额 / Amount: ${sym}${total.toFixed(2)}\n方式 / Method: ${methodLabel}`,
+      { title: '确认结账 / Confirm Checkout', confirmText: '确认 / Confirm' }
+    );
+    if (!ok) return;
 
     try {
       const cartPayload = cart.map(c => ({
@@ -391,6 +598,7 @@ GC.POS = (function () {
         guestName: guestName || null,
         cart: cartPayload,
         payment: { method },
+        discount: discount ? { ...discount, amount: discountAmount() } : null,
       });
 
       GC.toast(`订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');

@@ -230,6 +230,16 @@ input, select, textarea { font-family: inherit; }
 /* ===== Modal ===== */
 .modal { display: none; }
 .modal.show { display: block; }
+
+/* Confirm/prompt modal: narrower, more focused */
+.modal-content.modal-confirm {
+  max-width: 380px;
+}
+.confirm-message {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
 .modal-overlay {
   position: fixed; inset: 0; z-index: 200;
   background: rgba(0, 0, 0, 0.6);

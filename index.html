@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>GameStation Pro — 电竞甜品店计费系统</title>
-  <link rel="stylesheet" href="css/style.css?v=9">
-  <link rel="stylesheet" href="css/pos.css?v=9">
+  <link rel="stylesheet" href="css/style.css?v=11">
+  <link rel="stylesheet" href="css/pos.css?v=11">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
 </head>
@@ -55,21 +55,31 @@
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-  <script src="js/supabase-config.js?v=9"></script>
-  <script src="js/store.js?v=9"></script>
-  <script src="js/auth.js?v=9"></script>
-  <script src="js/dashboard.js?v=9"></script>
-  <script src="js/history.js?v=9"></script>
-  <script src="js/members.js?v=9"></script>
-  <script src="js/settings.js?v=9"></script>
-  <script src="js/pos.js?v=9"></script>
-  <script src="js/menu.js?v=9"></script>
-  <script src="js/orders.js?v=9"></script>
-  <script src="js/app.js?v=9"></script>
+  <script src="js/supabase-config.js?v=11"></script>
+  <script src="js/store.js?v=11"></script>
+  <script src="js/auth.js?v=11"></script>
+  <script src="js/dashboard.js?v=11"></script>
+  <script src="js/history.js?v=11"></script>
+  <script src="js/members.js?v=11"></script>
+  <script src="js/settings.js?v=11"></script>
+  <script src="js/pos.js?v=11"></script>
+  <script src="js/menu.js?v=11"></script>
+  <script src="js/orders.js?v=11"></script>
+  <script src="js/app.js?v=11"></script>
 
   <script>
+    // We removed the service worker due to stale-cache issues. For users
+    // who already have an old SW installed, register the new self-destruct
+    // SW which unregisters itself on activate. Subsequent visits will have
+    // no SW at all, just normal HTTP caching (cleaner + always-fresh on deploy).
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        if (regs.length > 0) {
+          // Old SW present — install the self-destruct one to clean up.
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+        // If no SW present, do nothing. App runs purely network-based.
+      }).catch(() => {});
     }
   </script>
 </body>

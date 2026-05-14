@@ -60,6 +60,14 @@ body.pos-mode .main-content {
   background: transparent;
 }
 
+/* Confirm modal text must be readable on the white modal in POS mode */
+body.pos-mode .confirm-message {
+  color: #2a1f17 !important;
+}
+body.pos-mode .modal-body {
+  color: #2a1f17;
+}
+
 /* Toast still readable on light bg */
 body.pos-mode .toast {
   background: #fff;
@@ -225,8 +233,11 @@ body.pos-mode .form-label { color: #6b5840; }
   cursor: pointer;
   transition: all 0.22s;
   position: relative;
-  overflow: hidden;
   user-select: none;
+  /* Flex column so price+button stay at bottom; min-height guarantees room */
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
 }
 .pos-item-card:hover {
   transform: translateY(-3px);
@@ -276,10 +287,16 @@ body.pos-mode .form-label { color: #6b5840; }
   margin-bottom: 10px;
   line-height: 1.2;
   min-height: 16px;
+  /* Allow up to 2 lines without pushing bottom row out */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .pos-item-bottom {
   display: flex; align-items: center; justify-content: space-between;
-  margin-top: auto;
+  margin-top: auto;       /* always anchored at bottom */
+  padding-top: 6px;
 }
 .pos-item-price {
   font-size: 1.15rem; font-weight: 800;
@@ -693,6 +710,125 @@ body.pos-mode .discount-preview-card {
 }
 .summary-divider { height: 1px; background: var(--border); margin: 4px 0; }
 body.pos-mode .summary-divider { background: #f0d9b8; }
+
+/* ===== Cash payment modal ===== */
+.modal-cash { max-width: 460px; }
+
+.cash-due-line {
+  display: flex; justify-content: space-between; align-items: baseline;
+  background: var(--bg-input);
+  padding: 14px 18px;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+body.pos-mode .cash-due-line {
+  background: linear-gradient(135deg, #fef3e2, #fef9f0);
+  border: 1px solid #f0d9b8;
+  color: #2a1f17;
+}
+.cash-due-amount {
+  font-size: 1.6rem; font-weight: 800;
+  color: var(--cyan);
+  font-family: var(--mono);
+}
+body.pos-mode .cash-due-amount { color: #78350f; }
+
+.cash-presets {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+}
+.cash-preset-btn {
+  flex: 1; min-width: 60px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+body.pos-mode .cash-preset-btn {
+  background: #fff;
+  color: #78350f;
+  border-color: #f0d9b8;
+}
+.cash-preset-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+body.pos-mode .cash-preset-btn:hover {
+  background: #fef3e2;
+  border-color: #d97706;
+  color: #78350f;
+}
+
+.cash-change-box {
+  margin-top: 16px;
+  padding: 16px 20px;
+  background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.3);
+  border-radius: 12px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+body.pos-mode .cash-change-box {
+  background: rgba(21,128,61,0.06);
+  border-color: rgba(21,128,61,0.25);
+}
+.cash-change-box.insufficient {
+  background: rgba(239,68,68,0.08);
+  border-color: rgba(239,68,68,0.3);
+}
+.cash-change-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+body.pos-mode .cash-change-label { color: #6b5840; }
+.cash-change-box.insufficient .cash-change-label { color: var(--red); }
+.cash-change-amount {
+  font-size: 2rem; font-weight: 800;
+  color: var(--green);
+  font-family: var(--mono);
+  letter-spacing: -0.02em;
+}
+body.pos-mode .cash-change-amount { color: #15803d; }
+.cash-change-box.insufficient .cash-change-amount {
+  color: var(--red);
+  font-size: 1.4rem;
+}
+
+.cash-numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+.np-btn {
+  padding: 16px 0;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1.4rem; font-weight: 700;
+  cursor: pointer; font-family: var(--mono);
+  transition: all 0.1s;
+}
+body.pos-mode .np-btn {
+  background: #fef9f0;
+  color: #2a1f17;
+  border-color: #f0d9b8;
+}
+.np-btn:hover { background: var(--bg-hover); }
+body.pos-mode .np-btn:hover { background: #fef3e2; }
+.np-btn:active { transform: scale(0.96); }
+.np-btn.back {
+  color: var(--red);
+  background: rgba(239,68,68,0.06);
+  border-color: rgba(239,68,68,0.2);
+}
+.np-btn.dot {
+  color: var(--text-muted);
+}
 
 /* ===== Receipt modal ===== */
 .pos-receipt-modal { max-width: 420px; }

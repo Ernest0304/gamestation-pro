@@ -577,14 +577,24 @@ GC.POS = (function () {
       return;
     }
 
-    // Confirm
-    const memberName = selectedMemberId ? GC.Store.getMember(selectedMemberId).name : null;
-    const methodLabel = ({ cash: '现金 Cash', paynow: 'PayNow', member_balance: `会员余额 (${memberName})` })[method];
-    const ok = await GC.confirm(
-      `金额 / Amount: ${sym}${total.toFixed(2)}\n方式 / Method: ${methodLabel}`,
-      { title: '确认结账 / Confirm Checkout', confirmText: '确认 / Confirm' }
-    );
-    if (!ok) return;
+    // Cash needs special flow: ask how much customer paid, show change
+    let cashReceived = null;
+    let changeGiven = null;
+    if (method === 'cash') {
+      const result = await showCashModal(total);
+      if (!result) return; // cancelled
+      cashReceived = result.received;
+      changeGiven = result.change;
+    } else {
+      // For PayNow / Member balance: simple confirm
+      const memberName = selectedMemberId ? GC.Store.getMember(selectedMemberId).name : null;
+      const methodLabel = ({ paynow: 'PayNow', member_balance: `会员余额 (${memberName})` })[method];
+      const ok = await GC.confirm(
+        `金额 / Amount: ${sym}${total.toFixed(2)}\n方式 / Method: ${methodLabel}`,
+        { title: '确认结账 / Confirm Checkout', confirmText: '确认 / Confirm' }
+      );
+      if (!ok) return;
+    }
 
     try {
       const cartPayload = cart.map(c => ({
@@ -593,22 +603,160 @@ GC.POS = (function () {
         note: c.note,
       }));
 
+      // Build cash note for audit trail
+      let cashNote = null;
+      if (method === 'cash' && cashReceived != null) {
+        cashNote = `收 ${sym}${cashReceived.toFixed(2)} 找 ${sym}${changeGiven.toFixed(2)}`;
+      }
+
       const result = await GC.Store.createOrder({
         memberId: selectedMemberId,
         guestName: guestName || null,
         cart: cartPayload,
         payment: { method },
         discount: discount ? { ...discount, amount: discountAmount() } : null,
+        note: cashNote,
       });
 
       GC.toast(`订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');
+      // Attach cash receipt info to the receipt for printing
+      result.order._cashReceived = cashReceived;
+      result.order._changeGiven = changeGiven;
       showReceipt(result.order, result.items);
 
-      // Clear after a moment
       clearCart();
     } catch (e) {
       GC.toast('结账失败 / Failed: ' + e.message, 'error');
     }
+  }
+
+  /* ---- Cash payment modal with change calculator ---- */
+  function showCashModal(totalDue) {
+    return new Promise(resolve => {
+      const sym = GC.Store.getSettings().currencySymbol;
+      // Smart quick-tender suggestions: exact, round up to nearest $5/$10/$20/$50/$100
+      const presets = [
+        totalDue,
+        Math.ceil(totalDue / 5) * 5,
+        Math.ceil(totalDue / 10) * 10,
+        Math.ceil(totalDue / 20) * 20,
+        Math.ceil(totalDue / 50) * 50,
+        Math.ceil(totalDue / 100) * 100,
+      ].filter((v, i, arr) => arr.indexOf(v) === i && v >= totalDue);
+
+      const modal = document.getElementById('modal');
+      modal.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-content modal-cash">
+            <div class="modal-header">
+              <h3>💵 现金支付 / Cash Payment</h3>
+              <button class="modal-close" id="m-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="cash-due-line">
+                <span>应收 / Total Due</span>
+                <span class="cash-due-amount">${sym}${totalDue.toFixed(2)}</span>
+              </div>
+
+              <div class="form-group" style="margin-top:18px">
+                <label class="form-label">客人付了多少 / Cash Received</label>
+                <div class="rate-input-group" style="max-width:240px">
+                  <span class="rate-prefix">${sym}</span>
+                  <input type="number" id="cash-received" class="form-input settings-input"
+                    min="${totalDue}" step="0.10" placeholder="${totalDue.toFixed(2)}"
+                    style="font-size:1.5rem;font-weight:700;width:160px;text-align:right" autofocus>
+                </div>
+                <div class="cash-presets">
+                  ${presets.map(p => `<button class="cash-preset-btn" data-amount="${p}">${sym}${p}</button>`).join('')}
+                </div>
+              </div>
+
+              <div class="cash-change-box" id="cash-change-box">
+                <div class="cash-change-label">应找 / Change</div>
+                <div class="cash-change-amount" id="cash-change-amount">${sym}0.00</div>
+              </div>
+
+              <div class="cash-numpad">
+                <button class="np-btn" data-digit="1">1</button>
+                <button class="np-btn" data-digit="2">2</button>
+                <button class="np-btn" data-digit="3">3</button>
+                <button class="np-btn" data-digit="4">4</button>
+                <button class="np-btn" data-digit="5">5</button>
+                <button class="np-btn" data-digit="6">6</button>
+                <button class="np-btn" data-digit="7">7</button>
+                <button class="np-btn" data-digit="8">8</button>
+                <button class="np-btn" data-digit="9">9</button>
+                <button class="np-btn dot" data-digit=".">.</button>
+                <button class="np-btn" data-digit="0">0</button>
+                <button class="np-btn back" data-back>⌫</button>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
+              <button class="btn btn-primary" id="m-ok" disabled>确认收款 / Confirm</button>
+            </div>
+          </div>
+        </div>`;
+      modal.classList.add('show');
+
+      const input = document.getElementById('cash-received');
+      const changeEl = document.getElementById('cash-change-amount');
+      const changeBox = document.getElementById('cash-change-box');
+      const okBtn = document.getElementById('m-ok');
+
+      const updateChange = () => {
+        const received = parseFloat(input.value) || 0;
+        const change = received - totalDue;
+        changeEl.textContent = `${sym}${change.toFixed(2)}`;
+        if (received < totalDue) {
+          changeBox.classList.add('insufficient');
+          changeEl.textContent = `差 ${sym}${(totalDue - received).toFixed(2)}`;
+          okBtn.disabled = true;
+        } else {
+          changeBox.classList.remove('insufficient');
+          okBtn.disabled = false;
+        }
+      };
+
+      input.addEventListener('input', updateChange);
+
+      // Preset buttons
+      modal.querySelectorAll('.cash-preset-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          input.value = b.dataset.amount;
+          updateChange();
+          input.focus();
+        });
+      });
+
+      // Numpad (for touch screens)
+      modal.querySelectorAll('.np-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          if (b.hasAttribute('data-back')) {
+            input.value = input.value.slice(0, -1);
+          } else {
+            const d = b.dataset.digit;
+            if (d === '.' && input.value.includes('.')) return;
+            input.value = (input.value || '') + d;
+          }
+          updateChange();
+        });
+      });
+
+      const done = (result) => {
+        modal.classList.remove('show'); modal.innerHTML = ''; resolve(result);
+      };
+      document.getElementById('m-close').onclick = () => done(null);
+      document.getElementById('m-cancel').onclick = () => done(null);
+      okBtn.onclick = () => {
+        const received = parseFloat(input.value) || 0;
+        if (received < totalDue) return;
+        done({ received: Math.round(received * 100) / 100, change: Math.round((received - totalDue) * 100) / 100 });
+      };
+
+      // Initial focus + clear placeholder
+      setTimeout(() => input.focus(), 50);
+    });
   }
 
   /* ---- Receipt modal ---- */
@@ -651,6 +799,10 @@ GC.POS = (function () {
               <span>${sym}${order.total.toFixed(2)}</span>
             </div>
             <div class="rcpt-meta">付款方式 / Paid via: ${methodLabel}</div>
+            ${order._cashReceived != null ? `
+              <div class="rcpt-line"><span>收 / Tendered</span><span>${sym}${order._cashReceived.toFixed(2)}</span></div>
+              <div class="rcpt-line"><span>找 / Change</span><span>${sym}${order._changeGiven.toFixed(2)}</span></div>
+            ` : ''}
             ${member && order.paymentMethod === 'member_balance' ? `<div class="rcpt-meta">余额 / Balance: ${sym}${member.balance.toFixed(2)}</div>` : ''}
             <div class="rcpt-footer">感谢光临 · Thank you ❤️</div>
           </div>

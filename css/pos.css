@@ -762,6 +762,123 @@ body.pos-mode .discount-preview-card {
 .summary-divider { height: 1px; background: var(--border); margin: 4px 0; }
 body.pos-mode .summary-divider { background: #f0d9b8; }
 
+/* ===== Split Bill modal ===== */
+.modal-split { max-width: 520px; }
+
+.split-summary {
+  background: var(--bg-input);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}
+body.pos-mode .split-summary {
+  background: linear-gradient(135deg, #fef3e2, #fef9f0);
+  border: 1px solid #f0d9b8;
+}
+.split-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+body.pos-mode .split-row { color: #6b5840; }
+.split-row.total {
+  font-weight: 600;
+}
+.split-row.total .split-amount-total {
+  font-family: var(--mono); font-size: 1.2rem; font-weight: 700;
+  color: var(--cyan);
+}
+body.pos-mode .split-row.total .split-amount-total { color: #78350f; }
+.split-row.paid { color: var(--green); }
+body.pos-mode .split-row.paid { color: #15803d; }
+.split-row.remaining.positive {
+  color: var(--red); font-weight: 700; font-size: 1rem;
+  padding-top: 6px; border-top: 1px dashed var(--border);
+}
+body.pos-mode .split-row.remaining.positive { color: #b91c1c; border-color: #f0d9b8; }
+.split-row.remaining.zero { color: var(--green); font-weight: 700; }
+body.pos-mode .split-row.remaining.zero { color: #15803d; }
+
+.split-section-title {
+  font-size: 0.85rem; font-weight: 700;
+  color: var(--text-secondary);
+  margin: 14px 0 10px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+body.pos-mode .split-section-title { color: #78350f; }
+
+.split-payments-list {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.split-empty {
+  padding: 14px; text-align: center;
+  color: var(--text-muted); font-size: 0.85rem;
+  background: var(--bg-input); border-radius: 8px;
+  border: 1px dashed var(--border);
+}
+body.pos-mode .split-empty {
+  background: #fef9f0; border-color: #f0d9b8; color: #92775a;
+}
+
+.split-payment-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+body.pos-mode .split-payment-row {
+  background: #fff; border-color: #f0d9b8;
+}
+.split-pay-method { font-weight: 600; }
+.split-pay-amount {
+  font-family: var(--mono); font-weight: 700; color: var(--green);
+}
+body.pos-mode .split-pay-amount { color: #15803d; }
+.split-payment-row small {
+  grid-column: 1 / -1;
+  font-size: 0.72rem; color: var(--text-muted);
+  margin-top: 2px;
+}
+body.pos-mode .split-payment-row small { color: #92775a; }
+.split-pay-remove {
+  background: transparent; border: none;
+  color: var(--text-muted); cursor: pointer;
+  font-size: 1.1rem; padding: 2px 6px;
+}
+.split-pay-remove:hover { color: var(--red); }
+
+.split-add-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+.split-add-btn {
+  padding: 12px 14px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.88rem; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+}
+body.pos-mode .split-add-btn {
+  background: #fef9f0; color: #78350f; border-color: #f0d9b8;
+}
+.split-add-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--cyan); color: var(--cyan);
+}
+body.pos-mode .split-add-btn:hover {
+  background: #fef3e2; border-color: #d97706; color: #78350f;
+}
+
 /* ===== Cash payment modal ===== */
 .modal-cash { max-width: 460px; }
 

@@ -247,6 +247,7 @@ GC.POS = (function () {
             ` : ''}
             <button class="pos-pay-btn ${member ? '' : 'primary'}" id="pay-cash" ${!canCheckout ? 'disabled' : ''}>💵 现金 Cash</button>
             <button class="pos-pay-btn" id="pay-paynow" ${!canCheckout ? 'disabled' : ''}>📱 PayNow</button>
+            <button class="pos-pay-btn" id="pay-split" ${!canCheckout ? 'disabled' : ''}>🔀 拆账 / Split Bill</button>
           </div>
         </div>
       </div>`;
@@ -314,9 +315,11 @@ GC.POS = (function () {
     const payBal = document.getElementById('pay-balance');
     const payCash = document.getElementById('pay-cash');
     const payNow = document.getElementById('pay-paynow');
+    const paySplit = document.getElementById('pay-split');
     if (payBal) payBal.addEventListener('click', () => checkout('member_balance'));
     if (payCash) payCash.addEventListener('click', () => checkout('cash'));
     if (payNow) payNow.addEventListener('click', () => checkout('paynow'));
+    if (paySplit) paySplit.addEventListener('click', () => showSplitBillModal());
 
     // Search
     const search = document.getElementById('pos-search');
@@ -792,6 +795,185 @@ GC.POS = (function () {
       // Initial focus + clear placeholder
       setTimeout(() => input.focus(), 50);
     });
+  }
+
+  /* ---- Split Bill modal ----
+     Lets cashier build a list of payments (cash / paynow / member balance)
+     that sum to the order total. Each cash tender goes through the same
+     numpad UI as showCashModal so change calculation works.
+  */
+  async function showSplitBillModal() {
+    if (cart.length === 0) return;
+    const sym = GC.Store.getSettings().currencySymbol;
+    const total = cartTotal();
+    const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
+    const payments = [];   // [{method, amount, tendered?, changeGiven?}]
+
+    const methodLabel = (m) => ({
+      cash: '💵 现金 Cash',
+      paynow: '📱 PayNow',
+      member_balance: '💎 会员余额',
+      card: '💳 信用卡',
+    })[m] || m;
+
+    const modal = document.getElementById('modal');
+
+    const renderModal = () => {
+      const paidSoFar = payments.reduce((s, p) => s + p.amount, 0);
+      const remaining = Math.max(0, total - paidSoFar);
+      const canConfirm = Math.abs(remaining) < 0.01;
+
+      modal.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-content modal-wide modal-split">
+            <div class="modal-header">
+              <h3>🔀 拆账 / Split Bill</h3>
+              <button class="modal-close" id="m-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="split-summary">
+                <div class="split-row total"><span>应收 / Total</span><span class="split-amount-total">${sym}${total.toFixed(2)}</span></div>
+                <div class="split-row paid"><span>已收 / Paid So Far</span><span>${sym}${paidSoFar.toFixed(2)}</span></div>
+                <div class="split-row remaining ${remaining > 0.01 ? 'positive' : 'zero'}">
+                  <span>${remaining > 0.01 ? '差 / Remaining' : '✅ 已收满 / Paid'}</span>
+                  <span>${sym}${remaining.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <h4 class="split-section-title">已添加的付款 / Payments Added</h4>
+              <div class="split-payments-list">
+                ${payments.length === 0 ? '<div class="split-empty">还没添加付款 / No payments yet</div>' : payments.map((p, i) => `
+                  <div class="split-payment-row">
+                    <span class="split-pay-method">${methodLabel(p.method)}</span>
+                    <span class="split-pay-amount">${sym}${p.amount.toFixed(2)}</span>
+                    ${p.tendered != null ? `<small>收 ${sym}${p.tendered.toFixed(2)} 找 ${sym}${p.changeGiven.toFixed(2)}</small>` : ''}
+                    <button class="split-pay-remove" data-rm="${i}" title="移除">×</button>
+                  </div>`).join('')}
+              </div>
+
+              ${remaining > 0.01 ? `
+                <h4 class="split-section-title" style="margin-top:18px">添加付款 / Add Payment (差 ${sym}${remaining.toFixed(2)})</h4>
+                <div class="split-add-buttons">
+                  <button class="split-add-btn" data-add="cash">💵 现金 Cash</button>
+                  <button class="split-add-btn" data-add="paynow">📱 PayNow</button>
+                  ${member && member.balance > 0 ? `<button class="split-add-btn" data-add="member_balance">💎 会员余额 (${sym}${member.balance.toFixed(2)})</button>` : ''}
+                </div>
+              ` : ''}
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="m-cancel">取消 / Cancel</button>
+              <button class="btn btn-primary" id="m-confirm-split" ${!canConfirm ? 'disabled' : ''}>
+                ${canConfirm ? '✅ 确认结账 / Confirm Split' : '继续添加 / Add More'}
+              </button>
+            </div>
+          </div>
+        </div>`;
+      modal.classList.add('show');
+
+      const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+      document.getElementById('m-close').onclick = close;
+      document.getElementById('m-cancel').onclick = close;
+
+      // Remove a payment
+      modal.querySelectorAll('[data-rm]').forEach(b => {
+        b.addEventListener('click', () => {
+          payments.splice(parseInt(b.dataset.rm), 1);
+          renderModal();
+        });
+      });
+
+      // Add payment buttons
+      modal.querySelectorAll('[data-add]').forEach(b => {
+        b.addEventListener('click', async () => {
+          const method = b.dataset.add;
+          if (method === 'cash') {
+            // Reuse cash modal (with remaining as the "due" for change calc)
+            modal.classList.remove('show');
+            const result = await showCashModal(remaining);
+            if (result) {
+              payments.push({
+                method: 'cash',
+                amount: remaining,
+                tendered: result.received,
+                changeGiven: result.change,
+              });
+            }
+            renderModal();
+          } else if (method === 'paynow') {
+            const amount = await askAmount(remaining, '📱 PayNow 金额 / Amount', sym);
+            if (amount != null) payments.push({ method: 'paynow', amount });
+            renderModal();
+          } else if (method === 'member_balance') {
+            const max = Math.min(remaining, member.balance);
+            const amount = await askAmount(max, `💎 会员余额扣款 (最多 ${sym}${max.toFixed(2)})`, sym);
+            if (amount != null) {
+              if (amount > member.balance + 0.01) {
+                GC.toast(`超过余额 / Exceeds balance ${sym}${member.balance.toFixed(2)}`, 'error');
+              } else {
+                payments.push({ method: 'member_balance', amount });
+              }
+            }
+            renderModal();
+          }
+        });
+      });
+
+      // Final confirm
+      const confirmBtn = document.getElementById('m-confirm-split');
+      if (confirmBtn) {
+        confirmBtn.onclick = async (e) => {
+          if (e.currentTarget.disabled) return;
+          e.currentTarget.disabled = true;
+          try {
+            const cartPayload = cart.map(c => ({
+              menuItemId: c.menuItemId, quantity: c.quantity, note: c.note,
+            }));
+            const result = await GC.Store.createOrder({
+              memberId: selectedMemberId,
+              guestName: guestName || null,
+              cart: cartPayload,
+              payments,   // ← array, not single payment
+              discount: discount ? { ...discount, amount: discountAmount() } : null,
+              note: `Split: ${payments.map(p => methodLabel(p.method) + ' ' + sym + p.amount.toFixed(2)).join(' + ')}`,
+            });
+            GC.toast(`✅ 订单 #${result.order.orderNo} 完成 · ${sym}${total.toFixed(2)}`, 'success');
+            close();
+            // Pass cash info to receipt (first cash payment)
+            const cashPart = payments.find(p => p.method === 'cash');
+            if (cashPart) {
+              result.order._cashReceived = cashPart.tendered;
+              result.order._changeGiven = cashPart.changeGiven;
+            }
+            showReceipt(result.order, result.items);
+            clearCart();
+          } catch (err) {
+            e.currentTarget.disabled = false;
+            GC.toast('结账失败 / Failed: ' + err.message, 'error');
+          }
+        };
+      }
+    };
+
+    renderModal();
+  }
+
+  /** Quick amount prompt — reuses GC.prompt with number type. */
+  async function askAmount(maxAmount, title, sym) {
+    const result = await GC.prompt(
+      `输入金额，最多 ${sym}${maxAmount.toFixed(2)}\nEnter amount, max ${sym}${maxAmount.toFixed(2)}`,
+      { title, type: 'number', defaultValue: maxAmount.toFixed(2) }
+    );
+    if (result === null || result === '') return null;
+    const n = parseFloat(result);
+    if (isNaN(n) || n <= 0) {
+      GC.toast('请输入有效金额 / Invalid amount', 'error');
+      return null;
+    }
+    if (n > maxAmount + 0.01) {
+      GC.toast(`超过剩余 / Exceeds remaining ${sym}${maxAmount.toFixed(2)}`, 'error');
+      return null;
+    }
+    return Math.round(n * 100) / 100;
   }
 
   /* ---- Receipt modal ---- */

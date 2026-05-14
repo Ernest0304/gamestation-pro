@@ -96,6 +96,9 @@ GC.Store = (function () {
       discount: Number(row.discount || 0),
       total: Number(row.total || 0),
       status: row.status || 'completed',
+      paymentMethod: row.payment_method || null,
+      cashier: row.cashier || null,
+      shortfall: Number(row.shortfall || 0),
     };
   }
 
@@ -334,8 +337,6 @@ GC.Store = (function () {
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'members' }, (payload) => {
-        // Critical: balance can change from any device (POS food order, gaming close, top-up).
-        // Subscribe so this cache stays current and no cashier sees stale balance.
         if (payload.eventType === 'INSERT' && payload.new) {
           const m = memberToApp(payload.new);
           if (!_cache.members.find(x => x.id === m.id)) _cache.members.push(m);
@@ -343,14 +344,53 @@ GC.Store = (function () {
           const m = memberToApp(payload.new);
           const i = _cache.members.findIndex(x => x.id === m.id);
           if (i >= 0) _cache.members[i] = m;
-          // Member archived (soft-delete) — hide from active cache
           if (m.archived_at) _cache.members = _cache.members.filter(x => x.id !== m.id);
         } else if (payload.eventType === 'DELETE' && payload.old) {
           _cache.members = _cache.members.filter(x => x.id !== payload.old.id);
         }
-        // Re-render member-aware views
         if (GC._currentView === 'members' && GC.Members) GC.Members.render();
         if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
+      })
+      // IT S1-B: orders + order_payments + top_ups + daily_closes were NOT subscribed.
+      // Two iPads ringing up orders independently saw stale Z-Report data forever.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const o = orderToApp(payload.new);
+          if (!_cache.orders.find(x => x.id === o.id)) _cache.orders.unshift(o);
+        } else if (payload.eventType === 'UPDATE' && payload.new) {
+          const o = orderToApp(payload.new);
+          const i = _cache.orders.findIndex(x => x.id === o.id);
+          if (i >= 0) _cache.orders[i] = o; else _cache.orders.unshift(o);
+        } else if (payload.eventType === 'DELETE' && payload.old) {
+          _cache.orders = _cache.orders.filter(x => x.id !== payload.old.id);
+        }
+        if (GC._currentView === 'orders' && GC.Orders) GC.Orders.render();
+        if (GC._currentView === 'history' && GC.History) GC.History.render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_payments' }, (payload) => {
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const p = orderPaymentToApp(payload.new);
+          if (!_cache.orderPayments.find(x => x.id === p.id)) _cache.orderPayments.push(p);
+        } else if (payload.eventType === 'DELETE' && payload.old) {
+          _cache.orderPayments = _cache.orderPayments.filter(x => x.id !== payload.old.id);
+        }
+        if (GC._currentView === 'history' && GC.History) GC.History.render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'top_ups' }, (payload) => {
+        if (payload.eventType === 'INSERT' && payload.new) {
+          const t = topUpToApp(payload.new);
+          if (!_cache.topUps.find(x => x.id === t.id)) _cache.topUps.unshift(t);
+        }
+        if (GC._currentView === 'history' && GC.History) GC.History.render();
+        if (GC._currentView === 'members' && GC.Members) GC.Members.render();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_closes' }, (payload) => {
+        if (payload.new) {
+          const c = dailyCloseToApp(payload.new);
+          _cache.dailyCloses = _cache.dailyCloses.filter(x => x.closeDate !== c.closeDate);
+          _cache.dailyCloses.unshift(c);
+        }
+        if (GC._currentView === 'history' && GC.History) GC.History.render();
       })
       .subscribe();
   }
@@ -635,6 +675,9 @@ GC.Store = (function () {
         const charge = await chargeBalance(session.memberId, -updated.total, `session_${session.stationName}`);
         shortfall = charge.shortfall || 0;
         if (shortfall > 0) {
+          // Finance #2: persist shortfall to sessions table so it's queryable
+          await sb.from('sessions').update({ shortfall }).eq('id', sessionId);
+          updated.shortfall = shortfall;
           try {
             const actor = await getCurrentUserEmail();
             await sb.from('audit_log').insert({
@@ -1106,7 +1149,7 @@ GC.Store = (function () {
     const { data: itemsData, error: itemsErr } = await sb.from('order_items').insert(itemRows).select();
     if (itemsErr) throw itemsErr;
 
-    // Insert payments (one row per tender)
+    // Insert payments (one row per tender) — IT S1-A: error check + rollback orphan order
     const paymentRows = paymentsList.map(p => ({
       order_id: orderData.id,
       method: p.method,
@@ -1115,7 +1158,14 @@ GC.Store = (function () {
       change_given: p.changeGiven != null ? round2(Number(p.changeGiven)) : null,
       note: p.note || null,
     }));
-    const { data: paymentsData } = await sb.from('order_payments').insert(paymentRows).select();
+    const { data: paymentsData, error: paymentsErr } = await sb.from('order_payments').insert(paymentRows).select();
+    if (paymentsErr) {
+      // Rollback: mark order as voided so Z-Report doesn't count it as revenue
+      try {
+        await sb.from('orders').update({ status: 'voided', note: 'AUTO-VOIDED: payment insert failed' }).eq('id', orderData.id);
+      } catch (_) {}
+      throw new Error('订单付款记录失败 / Payment record failed: ' + paymentsErr.message);
+    }
 
     // Audit log if discount was applied
     if (discountAmt > 0) {
@@ -1220,16 +1270,45 @@ GC.Store = (function () {
 
   /**
    * Mark a day as closed: snapshot + record cashier reconciliation.
+   *
+   * Guards (Finance + IT audit 2026-05-14):
+   * - IT S1-C: refuse if a close already exists for this date (second
+   *   cashier would silently overwrite the first).
+   * - Finance #3: refuse if any session is still active — an in-progress
+   *   walk-in bridging midnight is invisible to getDailySummary and would
+   *   corrupt the snapshot. Force all sessions to close first.
+   * - Finance #1: expected_cash includes top-up cash because the drawer
+   *   physically holds that money (top-ups are paid in cash at counter).
    */
   async function closeDay(yyyymmdd, actualCash, note) {
+    // Guard: existing close (use server-side check to defeat stale cache).
+    const { data: existing, error: existingErr } = await sb
+      .from('daily_closes')
+      .select('close_date, closed_by, closed_at')
+      .eq('close_date', yyyymmdd)
+      .maybeSingle();
+    if (existingErr) throw existingErr;
+    if (existing) {
+      throw new Error(`此日期已结账 (by ${existing.closed_by || 'unknown'}). 如需修改请联系管理员撤销原记录.`);
+    }
+
+    // Guard: no active sessions allowed.
+    const activeSessions = _cache.sessions.filter(s => s.status === 'active');
+    if (activeSessions.length > 0) {
+      const stationLabels = activeSessions.map(s => s.stationName || s.stationId).join(', ');
+      throw new Error(`仍有 ${activeSessions.length} 个游戏台未结账 (${stationLabels}). 请先结束所有台再日结.`);
+    }
+
     const summary = getDailySummary(yyyymmdd);
     const actor = await getCurrentUserEmail();
+    // Cash drawer holds order/session cash AND top-up cash collected.
+    const expectedCash = round2(summary.cash + summary.topUpsCash);
     const row = {
       close_date: yyyymmdd,
       closed_by: actor,
-      expected_cash: summary.cash,
+      expected_cash: expectedCash,
       actual_cash: actualCash != null ? Number(actualCash) : null,
-      cash_difference: actualCash != null ? round2(Number(actualCash) - summary.cash) : null,
+      cash_difference: actualCash != null ? round2(Number(actualCash) - expectedCash) : null,
       expected_paynow: summary.paynow,
       member_deductions: summary.memberBalance,
       total_discount: summary.totalDiscount,
@@ -1238,8 +1317,16 @@ GC.Store = (function () {
       note: note || null,
       snapshot: summary,
     };
-    const { data, error } = await sb.from('daily_closes').upsert(row, { onConflict: 'close_date' }).select().single();
-    if (error) throw error;
+    // INSERT (not upsert) — overwrite protection is enforced above; using
+    // insert here means a race between two cashiers will fail at the unique
+    // index instead of silently clobbering.
+    const { data, error } = await sb.from('daily_closes').insert(row).select().single();
+    if (error) {
+      if (error.code === '23505') {
+        throw new Error('此日期已结账 (另一位收银员同时操作). 请刷新后再试.');
+      }
+      throw error;
+    }
     const close = dailyCloseToApp(data);
     // Update cache (replace existing entry for this date if any)
     _cache.dailyCloses = _cache.dailyCloses.filter(c => c.closeDate !== yyyymmdd);

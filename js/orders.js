@@ -70,19 +70,30 @@ GC.Orders = (function () {
   }
 
   /* ---- Filtering ---- */
+  // Migration 009: scope reads to current branch.
+  function currentBranchId() {
+    return GC.Store.getCurrentBranchId ? GC.Store.getCurrentBranchId() : null;
+  }
+  function matchBranch(row, bId) {
+    return !bId || !row.branchId || row.branchId === bId;
+  }
+
   function getFilteredOrders() {
     const { start, end } = getWindow();
+    const bId = currentBranchId();
     return GC.Store.getOrders().filter(o => {
       const t = o.completedAt || o.createdAt;
       if (t < start || t >= end) return false;
       if (statusFilter !== 'all' && o.status !== statusFilter) return false;
       if (methodFilter !== 'all' && o.paymentMethod !== methodFilter) return false;
+      if (!matchBranch(o, bId)) return false;
       return true;
     });
   }
 
   function getFilteredSessions() {
     const { start, end } = getWindow();
+    const bId = currentBranchId();
     return (GC.Store.getSessions ? GC.Store.getSessions() : []).filter(s => {
       if (s.status !== 'completed' || !s.endTime) return false;
       if (s.endTime < start || s.endTime >= end) return false;
@@ -93,6 +104,7 @@ GC.Orders = (function () {
         const m = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
         if (m !== methodFilter) return false;
       }
+      if (!matchBranch(s, bId)) return false;
       return true;
     });
   }

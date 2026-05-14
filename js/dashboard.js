@@ -172,7 +172,14 @@ GC.Dashboard = (function () {
 
   /* ---- Render ---- */
   function render() {
-    const stations = GC.Store.getStations();
+    // Migration 009: filter to current branch's stations.
+    // Geylang has no stations seeded → empty array → renders friendly empty state.
+    const currentBranchId = GC.Store.getCurrentBranchId
+      ? GC.Store.getCurrentBranchId() : null;
+    const allStations = GC.Store.getStations();
+    const stations = currentBranchId
+      ? allStations.filter(s => s.branchId === currentBranchId)
+      : allStations;
     const settings = GC.Store.getSettings();
     const sym = settings.currencySymbol;
     const activeCount = stations.filter(s => s.status === 'active').length;

@@ -196,6 +196,16 @@ window.GC = window.GC || {};
     if (canSwitch) {
       chip.addEventListener('click', () => showBranchPicker(switchable, current.id));
     }
+
+    // Hide 游戏台 nav tab on non-gaming branches (Geylang).
+    // Also redirect away from that view if user is currently on it.
+    const gamingTab = document.querySelector('.nav-link[data-view="dashboard"]');
+    if (gamingTab) {
+      gamingTab.style.display = current.hasGaming ? '' : 'none';
+      if (!current.hasGaming && GC._currentView === 'dashboard') {
+        navigate('pos');
+      }
+    }
   }
 
   function showBranchPicker(branches, currentId) {

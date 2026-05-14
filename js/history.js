@@ -62,7 +62,13 @@ GC.History = (function () {
 
   function getFiltered() {
     const { start, end } = getRange();
-    return GC.Store.getSessions().filter(s => s.endTime >= start && s.endTime < end);
+    // Migration 009: scope to current branch
+    const bId = GC.Store.getCurrentBranchId ? GC.Store.getCurrentBranchId() : null;
+    return GC.Store.getSessions().filter(s => {
+      if (s.endTime < start || s.endTime >= end) return false;
+      if (bId && s.branchId && s.branchId !== bId) return false;
+      return true;
+    });
   }
 
   /* ---- Chart data builders ---- */

@@ -1255,20 +1255,23 @@ GC.Store = (function () {
     if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
     const actor = cashier || (await getCurrentUserEmail());
 
-    // Snapshot items
+    // Snapshot items — Migration 009: capture effective branch price at
+    // ring-up time. If branch_menu_pricing has an override for this branch,
+    // use it; else fall back to master menu_items.price.
     const items = cart.map(c => {
       const item = getMenuItem(c.menuItemId);
       if (!item) throw new Error(`商品不存在 Item not found: ${c.menuItemId}`);
       const qty = c.quantity || 1;
+      const effectivePrice = getEffectiveMenuPrice(c.menuItemId);
       return {
         menu_item_id: item.id,
         menu_no: item.menuNo,
         name_zh: item.nameZh,
         name_en: item.nameEn,
         emoji: item.emoji,
-        unit_price: item.price,
+        unit_price: effectivePrice,
         quantity: qty,
-        subtotal: round2(item.price * qty),
+        subtotal: round2(effectivePrice * qty),
         note: c.note || null,
       };
     });

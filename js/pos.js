@@ -49,6 +49,9 @@ GC.POS = (function () {
   function addToCart(menuItemId) {
     const item = GC.Store.getMenuItem(menuItemId);
     if (!item) return;
+    // Migration 009: respect per-branch override (NULL → master price)
+    const effectivePrice = GC.Store.getEffectiveMenuPrice
+      ? GC.Store.getEffectiveMenuPrice(menuItemId) : item.price;
     const existing = cart.find(c => c.menuItemId === menuItemId);
     if (existing) {
       existing.quantity += 1;
@@ -59,7 +62,7 @@ GC.POS = (function () {
         name: item.nameZh,
         nameEn: item.nameEn,
         emoji: item.emoji,
-        unitPrice: item.price,
+        unitPrice: effectivePrice,
         quantity: 1,
       });
     }
@@ -109,7 +112,17 @@ GC.POS = (function () {
   }
 
   function renderMenuPanel(cats, sym) {
-    const items = GC.Store.getMenuItems({ categoryId: activeCategoryId });
+    const allItems = GC.Store.getMenuItems({ categoryId: activeCategoryId });
+    // Migration 009: hide items disabled at current branch (Geylang excludes
+    // rice/sets/shrimp roll etc.). getEffectiveMenuPrice swaps in branch
+    // override price where present.
+    const isAvail = GC.Store.isMenuItemAvailable
+      ? (id) => GC.Store.isMenuItemAvailable(id)
+      : () => true;
+    const priceFor = GC.Store.getEffectiveMenuPrice
+      ? (id, fallback) => GC.Store.getEffectiveMenuPrice(id)
+      : (id, fallback) => fallback;
+    const items = allItems.filter(i => isAvail(i.id));
 
     const catTabs = cats.map(c => `
       <button class="pos-cat-pill ${c.id === activeCategoryId ? 'active' : ''}" data-cat="${c.id}">
@@ -122,6 +135,7 @@ GC.POS = (function () {
     } else {
       itemCards = items.map(i => {
         const inCart = cart.find(c => c.menuItemId === i.id);
+        const price = priceFor(i.id, i.price);
         // Photo if uploaded/cropped; emoji fallback for missing ones.
         // onerror swaps to emoji if the file 404s (handles legacy items)
         const visual = i.photoUrl
@@ -136,7 +150,7 @@ GC.POS = (function () {
             <div class="pos-item-name">${GC.esc(i.nameZh)}</div>
             <div class="pos-item-name-en">${GC.esc(i.nameEn)}</div>
             <div class="pos-item-bottom">
-              <div class="pos-item-price">${sym}${i.price.toFixed(2)}</div>
+              <div class="pos-item-price">${sym}${price.toFixed(2)}</div>
               <button class="pos-add-btn" data-add="${i.id}">+</button>
             </div>
           </div>`;
@@ -384,13 +398,24 @@ GC.POS = (function () {
 
   /* ---- Member picker modal ---- */
   function showMemberPicker() {
-    const members = GC.Store.getMembers();
+    // Migration 009: default show only members of current branch (per Ernest's
+    // "会员暂不共享" decision). Free-text search still finds cross-branch
+    // members by phone/code so a roaming customer isn't blocked.
+    const allMembers = GC.Store.getMembers();
+    const currentBranchId = GC.Store.getCurrentBranchId
+      ? GC.Store.getCurrentBranchId() : null;
+    const branchMembers = currentBranchId
+      ? allMembers.filter(m => !m.homeBranchId || m.homeBranchId === currentBranchId)
+      : allMembers;
     const sym = GC.Store.getSettings().currencySymbol;
     let q = '';
 
     const buildList = (filter) => {
       const f = filter.toLowerCase().trim();
-      const filtered = !f ? members : members.filter(m =>
+      // No filter: only current branch members. With filter: search ALL
+      // members so cross-branch customers are findable by phone/code.
+      const pool = f ? allMembers : branchMembers;
+      const filtered = !f ? pool : pool.filter(m =>
         m.name.toLowerCase().includes(f) ||
         (m.phone || '').includes(f) ||
         (m.bindCode || '').toLowerCase().includes(f)

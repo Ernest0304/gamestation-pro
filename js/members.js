@@ -35,7 +35,15 @@ GC.Members = (function () {
 
   function renderList() {
     detailId = null;
-    const members = GC.Store.getMembers();
+    // Migration 009: members page shows only current branch's members.
+    // Legacy members with no home_branch_id show for everyone (backfilled
+    // to Kallang by the migration so this only matters going forward).
+    const allMembers = GC.Store.getMembers();
+    const currentBranchId = GC.Store.getCurrentBranchId
+      ? GC.Store.getCurrentBranchId() : null;
+    const members = currentBranchId
+      ? allMembers.filter(m => !m.homeBranchId || m.homeBranchId === currentBranchId)
+      : allMembers;
     const settings = GC.Store.getSettings();
     const sym = settings.currencySymbol;
 

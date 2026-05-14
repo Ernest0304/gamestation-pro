@@ -199,7 +199,7 @@ GC.Dashboard = (function () {
     html += `
       <div class="stats-bar">
         <div class="stat-card"><span class="stat-label">使用中 / Active</span><span class="stat-value cyan">${activeCount}</span></div>
-        <div class="stat-card"><span class="stat-label">空闲 / Idle</span><span class="stat-value muted">${6 - activeCount}</span></div>
+        <div class="stat-card"><span class="stat-label">空闲 / Idle</span><span class="stat-value muted">${stations.length - activeCount}</span></div>
         <div class="stat-card"><span class="stat-label">今日订单 / Sessions</span><span class="stat-value muted">${todaySessions()}</span></div>
         <div class="stat-card"><span class="stat-label">今日收入 / Revenue</span><span class="stat-value green">${sym}${todayRevenue()}</span></div>
       </div>
@@ -636,11 +636,27 @@ GC.Dashboard = (function () {
     const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
     document.getElementById('m-close').onclick = close;
     document.getElementById('m-cancel').onclick = close;
-    document.getElementById('m-close-now').onclick = async () => {
-      await GC.Store.closeSession(session.id);
-      close();
-      render();
-      GC.toast(`已结账 / Closed — ${sym}${bill.total.toFixed(2)}`, 'success');
+    document.getElementById('m-close-now').onclick = async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;  // Ops fix: debounce
+      try {
+        const result = await GC.Store.closeSession(session.id);
+        close();
+        render();
+        if (result && result.shortfall > 0) {
+          // Ops critical: surface balance shortfall LOUDLY so cashier collects cash
+          GC.toast(
+            `⚠️ 余额不足 / Short — 需向客户多收 ${sym}${result.shortfall.toFixed(2)} 现金 / Collect ${sym}${result.shortfall.toFixed(2)} cash`,
+            'error'
+          );
+        } else {
+          GC.toast(`已结账 / Closed — ${sym}${bill.total.toFixed(2)}`, 'success');
+        }
+      } catch (err) {
+        btn.disabled = false;
+        GC.toast('结账失败 / Failed: ' + err.message, 'error');
+      }
     };
   }
 

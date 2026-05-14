@@ -27,6 +27,8 @@ GC.Store = (function () {
     menuItems: [],
     orders: [],
     orderItems: [],
+    orderPayments: [],
+    dailyCloses: [],
   };
 
   /* ========== Mappers ========== */
@@ -68,6 +70,9 @@ GC.Store = (function () {
       balance: Number(row.balance || 0),
       telegramId: row.telegram_id || null,
       bindCode: row.bind_code || null,
+      // IT S2-1: must surface archived_at so realtime UPDATE filter (archived members)
+      // can detect when a member gets soft-deleted from another tab.
+      archived_at: row.archived_at || null,
       createdAt: new Date(row.created_at).getTime(),
     };
   }
@@ -168,6 +173,38 @@ GC.Store = (function () {
     };
   }
 
+  function orderPaymentToApp(row) {
+    return {
+      id: row.id,
+      orderId: row.order_id,
+      method: row.method,
+      amount: Number(row.amount),
+      tendered: row.tendered != null ? Number(row.tendered) : null,
+      changeGiven: row.change_given != null ? Number(row.change_given) : null,
+      note: row.note,
+      createdAt: new Date(row.created_at).getTime(),
+    };
+  }
+
+  function dailyCloseToApp(row) {
+    return {
+      id: row.id,
+      closeDate: row.close_date,
+      closedAt: row.closed_at ? new Date(row.closed_at).getTime() : null,
+      closedBy: row.closed_by,
+      expectedCash: Number(row.expected_cash || 0),
+      actualCash: row.actual_cash != null ? Number(row.actual_cash) : null,
+      cashDifference: row.cash_difference != null ? Number(row.cash_difference) : null,
+      expectedPaynow: Number(row.expected_paynow || 0),
+      memberDeductions: Number(row.member_deductions || 0),
+      totalDiscount: Number(row.total_discount || 0),
+      topupsReceived: Number(row.topups_received || 0),
+      voidedOrders: Number(row.voided_orders || 0),
+      note: row.note,
+      snapshot: row.snapshot,
+    };
+  }
+
   /* ========== Bind code helpers ========== */
 
   function generateBindCode() {
@@ -189,6 +226,7 @@ GC.Store = (function () {
     const [
       settingsRes, stationsRes, membersRes, sessionsRes, topUpsRes,
       categoriesRes, menuItemsRes, ordersRes, orderItemsRes,
+      orderPaymentsRes, dailyClosesRes,
     ] = await Promise.all([
       sb.from('settings').select('*').single(),
       sb.from('stations').select('*').order('id'),
@@ -199,6 +237,8 @@ GC.Store = (function () {
       sb.from('menu_items').select('*').order('display_order'),
       sb.from('orders').select('*').order('created_at', { ascending: false }).limit(500),
       sb.from('order_items').select('*').limit(2000),
+      sb.from('order_payments').select('*').order('created_at', { ascending: false }).limit(1000),
+      sb.from('daily_closes').select('*').order('close_date', { ascending: false }).limit(60),
     ]);
 
     _cache.settings = settingsToApp(settingsRes.data);
@@ -210,6 +250,8 @@ GC.Store = (function () {
     _cache.menuItems = (menuItemsRes.data || []).map(menuItemToApp);
     _cache.orders = (ordersRes.data || []).map(orderToApp);
     _cache.orderItems = (orderItemsRes.data || []).map(orderItemToApp);
+    _cache.orderPayments = (orderPaymentsRes.data || []).map(orderPaymentToApp);
+    _cache.dailyCloses = (dailyClosesRes.data || []).map(dailyCloseToApp);
 
     if (!_subscribed) {
       _subscribed = true;
@@ -417,9 +459,11 @@ GC.Store = (function () {
    * Open a session (walk-in pre-paid or member open-ended).
    * For walk-in: hours required, paid upfront. For member: balance-based.
    */
-  async function openSession({ stationId, stationName, stationType, memberId, guestName, hours }) {
-    const start = Date.now();
+  async function openSession({ stationId, stationName, stationType, memberId, guestName, hours, paymentMethod, cashier }) {
+    const start = now();  // Use clock-synced now() not raw Date.now()
     const isWalkIn = !memberId;
+    // Capture cashier identity (Finance + Ops critical). Falls back to auth user.
+    const actor = cashier || (await getCurrentUserEmail());
 
     let row;
     if (isWalkIn) {
@@ -434,9 +478,10 @@ GC.Store = (function () {
         rate: bill.rate, subtotal: bill.subtotal,
         discount_percent: bill.discountPercent, discount: bill.discount, total: bill.total,
         status: 'active',
+        payment_method: paymentMethod || 'cash',  // walk-in is pre-paid — record method now
+        cashier: actor,
       };
     } else {
-      // Member: no pre-paid, will be billed on close from balance
       const { rate, regularRate } = getRateFor(stationType, memberId);
       row = {
         station_id: stationId, station_name: stationName, station_type: stationType,
@@ -446,6 +491,8 @@ GC.Store = (function () {
         duration_minutes: 0,
         rate, subtotal: 0, discount_percent: 0, discount: 0, total: 0,
         status: 'active',
+        payment_method: 'member_balance',
+        cashier: actor,
       };
     }
 
@@ -454,8 +501,9 @@ GC.Store = (function () {
     const session = sessionToApp(data);
     _cache.sessions.unshift(session);
 
-    // Mark station active
-    await sb.from('stations').update({ status: 'active' }).eq('id', stationId);
+    // Mark station active — must await (IT S1-4: was previously fire-and-forget)
+    const { error: stErr } = await sb.from('stations').update({ status: 'active' }).eq('id', stationId);
+    if (stErr) console.error('Station status update failed:', stErr);
     const idx = _cache.stations.findIndex(s => s.id === stationId);
     if (idx >= 0) _cache.stations[idx].status = 'active';
 
@@ -463,14 +511,29 @@ GC.Store = (function () {
   }
 
   /**
+   * Cashier identity helper — uses the currently signed-in Supabase user's email
+   * as the actor for audit columns. Falls back to 'unknown' if not signed in
+   * (shouldn't happen in normal flow but defensive).
+   */
+  async function getCurrentUserEmail() {
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      return user?.email || 'unknown';
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  /**
    * Extend a walk-in player by N hours. Charges only the NEW block at CURRENT rate.
    * IMPORTANT: existing paid time is NOT re-priced. If promo flipped mid-session, the
    * already-paid blocks keep their original price (prevents undercharge/overcharge of paid time).
    */
-  async function extendWalkIn(sessionId, extraHours) {
+  async function extendWalkIn(sessionId, extraHours, opts = {}) {
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session || session.status !== 'active' || session.memberId) return null;
     const { rate: currentRate, regularRate: currentRegularRate } = getRateFor(session.stationType, null);
+    const cashier = opts.cashier || (await getCurrentUserEmail());
 
     const extraMinutes = extraHours * 60;
     const extraCost = round2(extraHours * currentRate);
@@ -523,12 +586,11 @@ GC.Store = (function () {
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session || session.status !== 'active') return null;
 
-    const endTime = Date.now();
+    const endTime = now();  // clock-synced
     const durationMinutes = (endTime - session.startTime) / 60000;
 
     let final;
     if (session.memberId) {
-      // Member: prorated, deduct from balance
       const bill = computeMemberBill(session.stationType, durationMinutes, session.memberId);
       final = {
         end_time: endTime,
@@ -541,33 +603,48 @@ GC.Store = (function () {
         status: 'completed',
       };
     } else {
-      // Walk-in: total stays at pre-paid amount
       final = {
         end_time: endTime,
         duration_minutes: durationMinutes,
         status: 'completed',
-        // rate/subtotal/discount/total unchanged
       };
     }
 
-    const { data } = await sb.from('sessions').update(final).eq('id', sessionId).select().single();
-    const updated = sessionToApp(data);
+    // IT S1-2: atomic guard — refuse to close an already-closed session.
+    // Prevents double-debit if two cashiers tap "close" within the same second.
+    const { data, error: closeErr } = await sb.from('sessions')
+      .update(final)
+      .eq('id', sessionId)
+      .eq('status', 'active')   // ← critical guard
+      .select();
+    if (closeErr) throw closeErr;
+    if (!data || data.length === 0) {
+      // Another tab already closed it — fetch latest and return
+      const existing = _cache.sessions.find(s => s.id === sessionId);
+      return { ...existing, alreadyClosed: true };
+    }
+    const updated = sessionToApp(data[0]);
     const i = _cache.sessions.findIndex(s => s.id === sessionId);
     if (i >= 0) _cache.sessions[i] = updated;
 
-    // Deduct member balance atomically (race-free) + update stats
+    // Deduct member balance atomically + capture shortfall info for caller
+    let shortfall = 0;
     if (session.memberId) {
       const m = getMember(session.memberId);
       if (m) {
         const charge = await chargeBalance(session.memberId, -updated.total, `session_${session.stationName}`);
-        if (charge.shortfall > 0) {
-          // Balance ran out mid-session — record as cash-due (uncovered)
-          await sb.from('audit_log').insert({
-            action: 'session_shortfall',
-            before_state: { session_id: session.id, member_id: session.memberId, balance_before: m.balance },
-            after_state: { total_due: updated.total, shortfall: charge.shortfall },
-            note: 'Member balance insufficient — cashier should collect difference',
-          });
+        shortfall = charge.shortfall || 0;
+        if (shortfall > 0) {
+          try {
+            const actor = await getCurrentUserEmail();
+            await sb.from('audit_log').insert({
+              action: 'session_shortfall',
+              actor_email: actor,
+              before_state: { session_id: session.id, member_id: session.memberId, balance_before: m.balance },
+              after_state: { total_due: updated.total, shortfall },
+              note: 'Member balance insufficient — cashier should collect difference',
+            });
+          } catch (_) {}
         }
         await updateMember(session.memberId, {
           totalSpent: m.totalSpent + updated.total,
@@ -576,14 +653,17 @@ GC.Store = (function () {
       }
     }
 
-    // If no more active sessions for this station, mark idle
+    // Update station status — must await (IT S1-4: was fire-and-forget)
     const stillActive = getActiveSessionsForStation(session.stationId).length;
     if (stillActive === 0) {
-      await sb.from('stations').update({ status: 'idle' }).eq('id', session.stationId);
+      const { error: stErr } = await sb.from('stations').update({ status: 'idle' }).eq('id', session.stationId);
+      if (stErr) console.error('Station idle update failed:', stErr);
       const sidx = _cache.stations.findIndex(s => s.id === session.stationId);
       if (sidx >= 0) _cache.stations[sidx].status = 'idle';
     }
 
+    // Surface shortfall to caller so dashboard can show cashier the cash to collect
+    updated.shortfall = shortfall;
     return updated;
   }
 
@@ -924,13 +1004,15 @@ GC.Store = (function () {
   }
 
   /**
-   * Create a new order with items, optionally pay immediately.
+   * Create a new order with items + payments.
    * cart: [{ menuItemId, quantity, note }]
-   * payment: { method: 'cash'|'paynow'|'member_balance'|'card', memberId? }
-   * Returns the completed order.
+   * payments: [{ method, amount, tendered?, changeGiven?, note? }]  ← supports split bill
+   *           or for backwards compat, payment: { method } applies whole total to one method
+   * Returns { order, items, payments }.
    */
-  async function createOrder({ memberId, guestName, cart, payment, note, cashier, discount: discountInput }) {
+  async function createOrder({ memberId, guestName, cart, payment, payments, note, cashier, discount: discountInput }) {
     if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
+    const actor = cashier || (await getCurrentUserEmail());
 
     // Snapshot items
     const items = cart.map(c => {
@@ -951,11 +1033,10 @@ GC.Store = (function () {
     });
 
     const subtotal = round2(items.reduce((s, i) => s + i.subtotal, 0));
-    // Manual discount (from cashier in POS UI)
     let discountAmt = 0;
     let discountNote = null;
     if (discountInput && (discountInput.amount > 0 || discountInput.value > 0)) {
-      if (discountInput.amount != null) {
+      if (discountInput.amount != null && discountInput.amount > 0) {
         discountAmt = round2(Math.min(subtotal, discountInput.amount));
       } else if (discountInput.type === 'percent') {
         discountAmt = round2(subtotal * (discountInput.value / 100));
@@ -969,17 +1050,41 @@ GC.Store = (function () {
     }
     const total = round2(Math.max(0, subtotal - discountAmt));
 
-    // If member balance payment, check sufficient balance
-    if (payment.method === 'member_balance') {
-      if (!memberId) throw new Error('需要选择会员 Member required');
+    // Normalize payments — backwards compat with single payment object
+    let paymentsList = payments;
+    if (!paymentsList || paymentsList.length === 0) {
+      // legacy: single payment {method} applied to full total
+      paymentsList = [{
+        method: payment ? payment.method : 'cash',
+        amount: total,
+        tendered: payment ? payment.tendered : undefined,
+        changeGiven: payment ? payment.changeGiven : undefined,
+      }];
+    }
+
+    // Validate payments sum equals total (allow ±$0.01 rounding tolerance)
+    const paySum = round2(paymentsList.reduce((s, p) => s + Number(p.amount), 0));
+    if (Math.abs(paySum - total) > 0.01) {
+      throw new Error(`支付金额(${paySum})与应收(${total})不符 / Payment ${paySum} ≠ Total ${total}`);
+    }
+
+    // For each member_balance payment, verify member has enough balance
+    const memberPayments = paymentsList.filter(p => p.method === 'member_balance');
+    if (memberPayments.length > 0) {
+      if (!memberId) throw new Error('会员余额支付需要选择会员 / Member required for balance payment');
       const m = getMember(memberId);
       if (!m) throw new Error('会员不存在 Member not found');
-      if (m.balance < total) {
-        throw new Error(`余额不足: 需要 ${total}, 余额 ${m.balance.toFixed(2)}`);
+      const balanceDue = memberPayments.reduce((s, p) => s + Number(p.amount), 0);
+      if (m.balance < balanceDue) {
+        throw new Error(`余额不足: 需要 ${balanceDue}, 余额 ${m.balance.toFixed(2)}`);
       }
     }
 
-    // Insert order — combine cashier note + discount note
+    // Determine the primary payment_method for the orders row
+    const distinctMethods = [...new Set(paymentsList.map(p => p.method))];
+    const primaryMethod = distinctMethods.length === 1 ? distinctMethods[0] : 'mixed';
+
+    // Insert order
     const combinedNote = [note, discountNote].filter(Boolean).join(' | ') || null;
     const orderRow = {
       member_id: memberId || null,
@@ -987,10 +1092,10 @@ GC.Store = (function () {
       subtotal,
       discount: discountAmt,
       total,
-      payment_method: payment.method,
+      payment_method: primaryMethod,
       status: 'completed',
       note: combinedNote,
-      cashier: cashier || null,
+      cashier: actor,
       completed_at: new Date().toISOString(),
     };
     const { data: orderData, error: orderErr } = await sb.from('orders').insert(orderRow).select().single();
@@ -1001,13 +1106,23 @@ GC.Store = (function () {
     const { data: itemsData, error: itemsErr } = await sb.from('order_items').insert(itemRows).select();
     if (itemsErr) throw itemsErr;
 
-    // Audit log if discount was applied (so accountant can review at month-end)
+    // Insert payments (one row per tender)
+    const paymentRows = paymentsList.map(p => ({
+      order_id: orderData.id,
+      method: p.method,
+      amount: round2(Number(p.amount)),
+      tendered: p.tendered != null ? round2(Number(p.tendered)) : null,
+      change_given: p.changeGiven != null ? round2(Number(p.changeGiven)) : null,
+      note: p.note || null,
+    }));
+    const { data: paymentsData } = await sb.from('order_payments').insert(paymentRows).select();
+
+    // Audit log if discount was applied
     if (discountAmt > 0) {
       try {
-        const { data: { user } } = await sb.auth.getUser();
         await sb.from('audit_log').insert({
           action: 'order_discount',
-          actor_email: user?.email || null,
+          actor_email: actor,
           before_state: { order_no: orderData.order_no, subtotal },
           after_state: { discount: discountAmt, total, ...discountInput },
           note: discountNote,
@@ -1020,17 +1135,128 @@ GC.Store = (function () {
     _cache.orders.unshift(order);
     const orderItems = (itemsData || []).map(orderItemToApp);
     _cache.orderItems.push(...orderItems);
+    const orderPayments = (paymentsData || []).map(orderPaymentToApp);
+    _cache.orderPayments.push(...orderPayments);
 
-    // Deduct from member balance atomically (race-free)
-    if (payment.method === 'member_balance' && memberId) {
+    // Deduct member balance for any member_balance portion
+    const memberBalanceTotal = paymentsList
+      .filter(p => p.method === 'member_balance')
+      .reduce((s, p) => s + Number(p.amount), 0);
+    if (memberBalanceTotal > 0 && memberId) {
       const m = getMember(memberId);
-      await chargeBalance(memberId, -total, `order_${order.orderNo}`);
+      await chargeBalance(memberId, -memberBalanceTotal, `order_${order.orderNo}`);
       await updateMember(memberId, {
-        totalSpent: m.totalSpent + total,
+        totalSpent: m.totalSpent + memberBalanceTotal,
       });
     }
 
-    return { order, items: orderItems };
+    return { order, items: orderItems, payments: orderPayments };
+  }
+
+  /* ========== Daily summary / Z-Report ========== */
+
+  /**
+   * Aggregate the day's takings for end-of-shift reconciliation.
+   * Returns { cash, paynow, memberBalance, card, totalDiscount, topUps,
+   *           orderCount, sessionCount, voidedCount, byPayment[] }
+   */
+  function getDailySummary(yyyymmdd) {
+    const day = yyyymmdd || new Date().toISOString().slice(0, 10);
+    const start = new Date(day + 'T00:00:00').getTime();
+    const end = start + 86400000;
+
+    const dayOrders = _cache.orders.filter(o =>
+      o.status === 'completed' &&
+      (o.completedAt || o.createdAt) >= start &&
+      (o.completedAt || o.createdAt) < end
+    );
+    const orderIds = new Set(dayOrders.map(o => o.id));
+    const dayPayments = _cache.orderPayments.filter(p => orderIds.has(p.orderId));
+
+    const daySessions = _cache.sessions.filter(s =>
+      s.status === 'completed' && s.endTime && s.endTime >= start && s.endTime < end
+    );
+
+    const dayTopUps = _cache.topUps.filter(t => t.createdAt >= start && t.createdAt < end);
+
+    const voided = _cache.orders.filter(o =>
+      o.status === 'voided' &&
+      (o.completedAt || o.createdAt) >= start &&
+      (o.completedAt || o.createdAt) < end
+    );
+
+    // Aggregate by payment method (orders + sessions both contribute)
+    const byMethod = { cash: 0, paynow: 0, member_balance: 0, card: 0 };
+    dayPayments.forEach(p => {
+      byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
+    });
+    // Sessions also contribute revenue. payment_method column on sessions
+    // tells us which bucket (walk-in defaults to 'cash' if column blank).
+    daySessions.forEach(s => {
+      const method = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
+      byMethod[method] = (byMethod[method] || 0) + Number(s.total);
+    });
+
+    const totalDiscount = dayOrders.reduce((s, o) => s + Number(o.discount || 0), 0);
+    const topupsCash = dayTopUps.reduce((s, t) => s + Number(t.amount), 0);
+    const topupsBonus = dayTopUps.reduce((s, t) => s + Number(t.bonus || 0), 0);
+
+    return {
+      day,
+      orderCount: dayOrders.length,
+      sessionCount: daySessions.length,
+      voidedCount: voided.length,
+      totalRevenue: round2(Object.values(byMethod).reduce((s, v) => s + v, 0)),
+      cash: round2(byMethod.cash),
+      paynow: round2(byMethod.paynow),
+      memberBalance: round2(byMethod.member_balance),
+      card: round2(byMethod.card),
+      totalDiscount: round2(totalDiscount),
+      topUpsCash: round2(topupsCash),
+      topUpsBonus: round2(topupsBonus),
+      voidedOrders: voided.map(v => ({ orderNo: v.orderNo, total: v.total })),
+    };
+  }
+
+  /**
+   * Mark a day as closed: snapshot + record cashier reconciliation.
+   */
+  async function closeDay(yyyymmdd, actualCash, note) {
+    const summary = getDailySummary(yyyymmdd);
+    const actor = await getCurrentUserEmail();
+    const row = {
+      close_date: yyyymmdd,
+      closed_by: actor,
+      expected_cash: summary.cash,
+      actual_cash: actualCash != null ? Number(actualCash) : null,
+      cash_difference: actualCash != null ? round2(Number(actualCash) - summary.cash) : null,
+      expected_paynow: summary.paynow,
+      member_deductions: summary.memberBalance,
+      total_discount: summary.totalDiscount,
+      topups_received: summary.topUpsCash,
+      voided_orders: summary.voidedCount,
+      note: note || null,
+      snapshot: summary,
+    };
+    const { data, error } = await sb.from('daily_closes').upsert(row, { onConflict: 'close_date' }).select().single();
+    if (error) throw error;
+    const close = dailyCloseToApp(data);
+    // Update cache (replace existing entry for this date if any)
+    _cache.dailyCloses = _cache.dailyCloses.filter(c => c.closeDate !== yyyymmdd);
+    _cache.dailyCloses.unshift(close);
+    // Audit log
+    await sb.from('audit_log').insert({
+      action: 'daily_close',
+      actor_email: actor,
+      before_state: summary,
+      after_state: { actual_cash: actualCash, difference: row.cash_difference, note },
+    });
+    return close;
+  }
+
+  function getDailyCloses() { return _cache.dailyCloses; }
+  function getOrderPaymentsFor(orderId) {
+    return _cache.orderPayments.filter(p => p.orderId === orderId);
   }
 
   async function voidOrder(orderId) {
@@ -1120,8 +1346,10 @@ GC.Store = (function () {
     getMenuItems, getMenuItem, getMenuItemByNo,
     addMenuItem, updateMenuItem, deleteMenuItem,
     // Orders
-    getOrders, getOrder, getOrderItemsForOrder,
+    getOrders, getOrder, getOrderItemsForOrder, getOrderPaymentsFor,
     createOrder, voidOrder,
+    // Daily close / Z-Report
+    getDailySummary, getDailyCloses, closeDay,
     // Billing
     getRateFor, resolveRateTier,
     computeWalkInBill, computeMemberBill,

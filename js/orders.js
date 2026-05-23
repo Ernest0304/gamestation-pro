@@ -137,6 +137,9 @@ GC.Orders = (function () {
       if (o.takeaway) tags.push('<span class="row-tag takeaway">🥡 外带</span>');
       if (o.paymentMethod === 'grab') tags.push('<span class="row-tag grab">🛵</span>');
       if (o.paymentMethod === 'foodpanda') tags.push('<span class="row-tag foodpanda">🐼</span>');
+      const actionCell = o.status === 'voided'
+        ? '<span class="voided-tag-sm">作废</span>'
+        : `<button class="row-void-btn" data-void="${o.id}" title="作废订单 / Void">✕</button>`;
       rows.push({
         ts: o.completedAt || o.createdAt,
         html: `
@@ -147,7 +150,8 @@ GC.Orders = (function () {
             <td>${customer}</td>
             <td><div class="order-items-preview">${itemSummary}${moreItems} ${tags.join('')}</div></td>
             <td><span class="payment-tag ${o.paymentMethod}">${methodLabel(o.paymentMethod)}</span></td>
-            <td><strong>${sym}${o.total.toFixed(2)}</strong> ${o.status === 'voided' ? '<span class="voided-tag">已作废</span>' : ''}</td>
+            <td><strong>${sym}${o.total.toFixed(2)}</strong></td>
+            <td class="row-actions">${actionCell}</td>
           </tr>`,
       });
     });
@@ -167,13 +171,14 @@ GC.Orders = (function () {
             <td><div class="order-items-preview"><small>${fmtDur(s.durationMinutes)} · ${s.stationType || 'PS5'}</small></div></td>
             <td><span class="payment-tag ${method}">${methodLabel(method)}</span></td>
             <td><strong>${sym}${s.total.toFixed(2)}</strong></td>
+            <td class="row-actions"></td>
           </tr>`,
       });
     });
     rows.sort((a, b) => b.ts - a.ts);
 
     const tbody = rows.length === 0
-      ? `<tr><td colspan="7" class="table-empty">所选条件下没有记录 / No records in this range</td></tr>`
+      ? `<tr><td colspan="8" class="table-empty">所选条件下没有记录 / No records in this range</td></tr>`
       : rows.map(r => r.html).join('');
 
     const catPill = (key, label) =>
@@ -264,6 +269,7 @@ GC.Orders = (function () {
               <th>明细 / Detail</th>
               <th>付款 / Pay</th>
               <th>金额 / Amount</th>
+              <th style="width:50px"></th>
             </tr>
           </thead>
           <tbody>${tbody}</tbody>
@@ -301,8 +307,53 @@ GC.Orders = (function () {
     });
 
     document.querySelectorAll('[data-order]').forEach(r => {
-      r.addEventListener('click', () => showOrderDetail(r.dataset.order));
+      r.addEventListener('click', (e) => {
+        // Don't open detail when clicking the inline void button
+        if (e.target.closest('[data-void]')) return;
+        showOrderDetail(r.dataset.order);
+      });
     });
+    document.querySelectorAll('[data-void]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        confirmAndVoidOrder(b.dataset.void);
+      });
+    });
+  }
+
+  /** Reason-prompt void flow. Used by row-level ✕ button AND detail-modal button. */
+  async function confirmAndVoidOrder(orderId) {
+    const order = GC.Store.getOrder(orderId);
+    if (!order) return;
+    if (order.status === 'voided') return;
+    const sym = GC.Store.getSettings().currencySymbol;
+    const tenders = GC.Store.getOrderPaymentsFor ? GC.Store.getOrderPaymentsFor(orderId) : [];
+    const hasMember = order.paymentMethod === 'member_balance'
+      || tenders.some(t => t.method === 'member_balance');
+
+    // Capture reason as part of confirm so it's audit-trailed.
+    const reason = await GC.prompt(
+      `订单 #${order.orderNo} · ${sym}${order.total.toFixed(2)}\n` +
+      `付款方式: ${methodLabel(order.paymentMethod)}\n` +
+      (hasMember ? '会员余额将自动退回。' : '现金/PayNow 等需手动退给客户。') +
+      `\n\n请输入作废原因 (员工记录用):`,
+      { title: '作废订单 / Void Order', defaultValue: '客户改主意' }
+    );
+    if (reason === null) return; // cancelled
+    const note = (reason || '').trim() || '未填写原因';
+
+    try {
+      await GC.Store.voidOrder(orderId, { note });
+      GC.toast(`✅ 订单 #${order.orderNo} 已作废`, 'success');
+      // Close detail modal if open, then re-render orders view
+      const modal = document.getElementById('modal');
+      if (modal && modal.classList.contains('show')) {
+        modal.classList.remove('show'); modal.innerHTML = '';
+      }
+      render();
+    } catch (err) {
+      GC.toast('作废失败 / Failed: ' + err.message, 'error');
+    }
   }
 
   function showOrderDetail(orderId) {
@@ -382,21 +433,7 @@ GC.Orders = (function () {
     document.getElementById('m-close-btn').onclick = close;
     const voidBtn = document.getElementById('m-void');
     if (voidBtn) {
-      voidBtn.onclick = async () => {
-        const hasMember = order.paymentMethod === 'member_balance'
-          || tenders.some(t => t.method === 'member_balance');
-        const refundMsg = hasMember
-          ? '\n会员余额将自动退回 / Member balance will be refunded.' : '';
-        const ok = await GC.confirm(
-          `订单 #${order.orderNo} 将被作废${refundMsg}`,
-          { title: '作废订单 / Void Order', danger: true, confirmText: '作废 / Void' }
-        );
-        if (!ok) return;
-        await GC.Store.voidOrder(orderId);
-        GC.toast('已作废 / Voided', 'success');
-        close();
-        render();
-      };
+      voidBtn.onclick = () => confirmAndVoidOrder(orderId);
     }
   }
 

@@ -1363,6 +1363,28 @@ tr.voided { opacity: 0.5; text-decoration: line-through; }
   text-decoration: none;
   display: inline-block;
 }
+.voided-tag-sm {
+  font-size: 0.65rem; padding: 1px 5px; border-radius: 3px;
+  background: rgba(239,68,68,0.12); color: var(--red);
+  font-weight: 700; text-decoration: none;
+}
+.row-actions { text-align: center; vertical-align: middle; }
+.row-void-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  width: 28px; height: 28px;
+  font-size: 0.85rem; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+  line-height: 1;
+}
+.row-void-btn:hover {
+  background: rgba(239,68,68,0.08);
+  border-color: rgba(239,68,68,0.4);
+  color: var(--red);
+}
 
 .order-detail-meta {
   background: var(--bg-input);

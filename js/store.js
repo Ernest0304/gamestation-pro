@@ -348,6 +348,7 @@ GC.Store = (function () {
     if (!_subscribed) {
       _subscribed = true;
       subscribeRealtime();
+      startPollingBackstop();
     }
   }
 
@@ -372,6 +373,8 @@ GC.Store = (function () {
   function resetForLogout() {
     _initPromise = null;
     _subscribed = false;
+    if (typeof stopPollingBackstop === 'function') stopPollingBackstop();
+    if (_realtimeReconnectTimer) { clearTimeout(_realtimeReconnectTimer); _realtimeReconnectTimer = null; }
     try {
       if (sb && sb.removeAllChannels) sb.removeAllChannels();
     } catch (_) {}
@@ -573,7 +576,89 @@ GC.Store = (function () {
         if (GC._currentView === 'pos' && GC.POS) GC.POS.render();
         if (GC._currentView === 'menu' && GC.Menu) GC.Menu.render();
       })
-      .subscribe();
+      .subscribe((status, err) => {
+        // Surface the channel state so we can debug + react.
+        // Ernest 2026-05-14: PC2 wasn't seeing PC1's table-open events → confirmed
+        // realtime was silently failing on one client. Now we (a) log status,
+        // (b) update _realtimeStatus for UI badge, (c) auto-reconnect on error,
+        // (d) the polling backstop below keeps the dashboard fresh regardless.
+        _realtimeStatus = status;
+        try { window.dispatchEvent(new CustomEvent('gc:realtime-status', { detail: { status, err } })); } catch (_) {}
+        if (err) console.warn('[realtime]', status, err);
+        else console.log('[realtime]', status);
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          // Schedule a reconnect — light back-off so we don't hammer on outage.
+          clearTimeout(_realtimeReconnectTimer);
+          _realtimeReconnectTimer = setTimeout(() => {
+            console.log('[realtime] attempting reconnect');
+            _subscribed = false;
+            try { sb.removeAllChannels(); } catch (_) {}
+            subscribeRealtime();
+          }, 3000);
+        }
+      });
+  }
+
+  /* ========== Realtime status + polling backstop (Ernest 2026-05-14) ==========
+     Realtime can silently fail (network blip, WebSocket dropped, free-tier
+     throttling). Without a backstop, a stale dashboard means two cashiers
+     open the same table — exactly what was reported. So we poll sessions +
+     stations every 15s when the dashboard is visible. Cheap (2 small selects),
+     bounded by visibility check, and only when the cashier is actually
+     looking at gaming. */
+  let _realtimeStatus = 'INIT';
+  let _realtimeReconnectTimer = null;
+  let _pollingTimer = null;
+
+  function getRealtimeStatus() { return _realtimeStatus; }
+
+  async function pollDashboardData() {
+    if (!sb) return;
+    try {
+      const [sessionsRes, stationsRes] = await Promise.all([
+        sb.from('sessions').select('*').order('created_at', { ascending: false }).limit(200),
+        sb.from('stations').select('*').order('id'),
+      ]);
+      let changed = false;
+      if (sessionsRes.data) {
+        const fresh = sessionsRes.data.map(sessionToApp);
+        // Replace cache for these rows
+        const freshIds = new Set(fresh.map(s => s.id));
+        const oldActive = _cache.sessions.filter(s => s.status === 'active').map(s => s.id).sort().join(',');
+        _cache.sessions = [
+          ...fresh,
+          ..._cache.sessions.filter(s => !freshIds.has(s.id)),
+        ];
+        const newActive = _cache.sessions.filter(s => s.status === 'active').map(s => s.id).sort().join(',');
+        if (oldActive !== newActive) changed = true;
+      }
+      if (stationsRes.data) {
+        const fresh = stationsRes.data.map(stationToApp);
+        const oldStatus = _cache.stations.map(s => s.id + ':' + s.status).sort().join(',');
+        _cache.stations = fresh;
+        const newStatus = _cache.stations.map(s => s.id + ':' + s.status).sort().join(',');
+        if (oldStatus !== newStatus) changed = true;
+      }
+      if (changed && GC._currentView === 'dashboard' && GC.Dashboard) {
+        GC.Dashboard.render();
+      }
+    } catch (e) {
+      console.warn('[polling] failed:', e.message);
+    }
+  }
+
+  function startPollingBackstop() {
+    stopPollingBackstop();
+    // Tick every 15s. The realtime handler does the fast path (<1s); polling
+    // catches anything realtime missed.
+    _pollingTimer = setInterval(() => {
+      if (GC._currentView === 'dashboard' && !document.hidden) {
+        pollDashboardData();
+      }
+    }, 15000);
+  }
+  function stopPollingBackstop() {
+    if (_pollingTimer) { clearInterval(_pollingTimer); _pollingTimer = null; }
   }
 
   /* ========== Server clock sync (anti-drift) ========== */
@@ -1908,5 +1993,7 @@ GC.Store = (function () {
     getCurrentBranchId, getCurrentBranch, setCurrentBranchId,
     getStaffBranches, getMyRole, getMyAccessibleBranchIds,
     getEffectiveMenuPrice, isMenuItemAvailable, getBranchMenuPricing,
+    // Realtime diagnostics (Ernest 2026-05-14)
+    getRealtimeStatus, pollDashboardData,
   };
 })();

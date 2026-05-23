@@ -287,6 +287,37 @@ window.GC = window.GC || {};
     if (GC._currentView && views[GC._currentView]) views[GC._currentView].render();
   });
 
+  /* ---- Realtime status badge (Ernest 2026-05-14) ----
+     Shows a small dot on the navbar ONLY when realtime is in a degraded
+     state (not subscribed / errored). When healthy, hidden — no UI noise.
+     User sees it and knows "live sync may be slow, polling is still active". */
+  function renderRealtimeStatus(detail) {
+    let badge = document.getElementById('realtime-status-badge');
+    const status = (detail && detail.status) || (GC.Store.getRealtimeStatus && GC.Store.getRealtimeStatus());
+    const healthy = status === 'SUBSCRIBED';
+    if (healthy) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'realtime-status-badge';
+      badge.className = 'realtime-status-badge';
+      document.body.appendChild(badge);
+    }
+    const labels = {
+      INIT: '⏳ 连接中…',
+      CONNECTING: '⏳ 连接中…',
+      JOINING: '⏳ 连接中…',
+      CHANNEL_ERROR: '🔴 实时同步中断（每 15 秒轮询备份）',
+      TIMED_OUT: '🔴 实时同步超时（每 15 秒轮询备份）',
+      CLOSED: '🔴 实时同步断开',
+    };
+    badge.textContent = labels[status] || `⚠️ ${status}`;
+    badge.classList.toggle('error', /ERROR|TIMED_OUT|CLOSED/.test(status));
+  }
+  window.addEventListener('gc:realtime-status', (e) => renderRealtimeStatus(e.detail));
+
   // Re-evaluate floating-vs-inline placement on viewport resize / orientation
   // change. Handles devtools device-mode swapping AND real device rotation.
   // Debounced so we don't thrash during drag-resize.

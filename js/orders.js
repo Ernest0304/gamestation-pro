@@ -160,10 +160,15 @@ GC.Orders = (function () {
         ? (() => { const m = GC.Store.getMember(s.memberId); return m ? `${m.name} 💎` : '会员'; })()
         : '散客 Walk-in';
       const method = s.memberId ? 'member_balance' : (s.paymentMethod || 'cash');
+      const sessActionCell = s.status === 'voided'
+        ? '<span class="voided-tag-sm">作废</span>'
+        : (s.status === 'completed'
+          ? `<button class="row-void-btn" data-void-session="${s.id}" title="作废台 / Void session">✕</button>`
+          : '');
       rows.push({
         ts: s.endTime,
         html: `
-          <tr data-session="${s.id}" class="gaming-row">
+          <tr data-session="${s.id}" class="gaming-row ${s.status === 'voided' ? 'voided' : ''}">
             <td><span class="row-type-badge gaming">🎮</span></td>
             <td><strong>${s.stationName}</strong></td>
             <td>${fmtDate(s.endTime)} ${fmtTime(s.startTime)}–${fmtTime(s.endTime)}</td>
@@ -171,7 +176,7 @@ GC.Orders = (function () {
             <td><div class="order-items-preview"><small>${fmtDur(s.durationMinutes)} · ${s.stationType || 'PS5'}</small></div></td>
             <td><span class="payment-tag ${method}">${methodLabel(method)}</span></td>
             <td><strong>${sym}${s.total.toFixed(2)}</strong></td>
-            <td class="row-actions"></td>
+            <td class="row-actions">${sessActionCell}</td>
           </tr>`,
       });
     });
@@ -309,7 +314,7 @@ GC.Orders = (function () {
     document.querySelectorAll('[data-order]').forEach(r => {
       r.addEventListener('click', (e) => {
         // Don't open detail when clicking the inline void button
-        if (e.target.closest('[data-void]')) return;
+        if (e.target.closest('[data-void], [data-void-session]')) return;
         showOrderDetail(r.dataset.order);
       });
     });
@@ -319,9 +324,85 @@ GC.Orders = (function () {
         confirmAndVoidOrder(b.dataset.void);
       });
     });
+    document.querySelectorAll('[data-void-session]').forEach(b => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        confirmAndVoidSession(b.dataset.voidSession);
+      });
+    });
   }
 
-  /** Reason-prompt void flow. Used by row-level ✕ button AND detail-modal button. */
+  // Hardcoded staff list — pick whoever is physically doing the void.
+  // Ernest 2026-05-14. Update here if the team changes.
+  const STAFF_LIST = ['Qian Min', 'Tock Chau', 'Ke Ying', 'Felicia', 'Ernest'];
+
+  /**
+   * Shared void modal. Used by both order void and session void.
+   * Returns Promise<{ staff, reason } | null>.
+   *
+   * @param {object} ctx
+   * @param {'order'|'session'} ctx.type
+   * @param {string} ctx.title
+   * @param {string} ctx.summary  multi-line summary shown above inputs
+   * @param {string} [ctx.refundHint]  optional teal hint (e.g., '会员余额会自动退回')
+   */
+  function showVoidModal(ctx) {
+    return new Promise(resolve => {
+      const modal = document.getElementById('modal');
+      const staffOpts = ['<option value="">— 请选择 / Select —</option>']
+        .concat(STAFF_LIST.map(s => `<option value="${GC.esc(s)}">${GC.esc(s)}</option>`))
+        .join('');
+      modal.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-content modal-void">
+            <div class="modal-header">
+              <h3>${GC.esc(ctx.title)}</h3>
+              <button class="modal-close" id="vm-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="void-summary">${ctx.summary.split('\n').map(l => `<div>${GC.esc(l)}</div>`).join('')}</div>
+              ${ctx.refundHint ? `<div class="void-refund-hint">${GC.esc(ctx.refundHint)}</div>` : ''}
+              <div class="form-group">
+                <label class="form-label">操作员 / Performed by *</label>
+                <select id="vm-staff" class="form-input">${staffOpts}</select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">作废原因 / Reason *</label>
+                <input type="text" id="vm-reason" class="form-input" placeholder="例：客户改主意 / 厨房做错了 / 开错台">
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="vm-cancel">取消 / Cancel</button>
+              <button class="btn btn-primary" id="vm-confirm" style="background:var(--red);border:none" disabled>🗑 确认作废 / Confirm Void</button>
+            </div>
+          </div>
+        </div>`;
+      modal.classList.add('show');
+
+      const staffSel = document.getElementById('vm-staff');
+      const reasonInput = document.getElementById('vm-reason');
+      const confirmBtn = document.getElementById('vm-confirm');
+      const updateOk = () => {
+        confirmBtn.disabled = !staffSel.value || !reasonInput.value.trim();
+      };
+      staffSel.addEventListener('change', updateOk);
+      reasonInput.addEventListener('input', updateOk);
+
+      const close = (result) => {
+        modal.classList.remove('show'); modal.innerHTML = '';
+        resolve(result);
+      };
+      document.getElementById('vm-close').onclick = () => close(null);
+      document.getElementById('vm-cancel').onclick = () => close(null);
+      confirmBtn.onclick = () => {
+        if (confirmBtn.disabled) return;
+        close({ staff: staffSel.value, reason: reasonInput.value.trim() });
+      };
+      setTimeout(() => reasonInput.focus(), 60);
+    });
+  }
+
+  /** Order void flow — opens shared modal, calls store.voidOrder. */
   async function confirmAndVoidOrder(orderId) {
     const order = GC.Store.getOrder(orderId);
     if (!order) return;
@@ -331,25 +412,55 @@ GC.Orders = (function () {
     const hasMember = order.paymentMethod === 'member_balance'
       || tenders.some(t => t.method === 'member_balance');
 
-    // Capture reason as part of confirm so it's audit-trailed.
-    const reason = await GC.prompt(
-      `订单 #${order.orderNo} · ${sym}${order.total.toFixed(2)}\n` +
-      `付款方式: ${methodLabel(order.paymentMethod)}\n` +
-      (hasMember ? '会员余额将自动退回。' : '现金/PayNow 等需手动退给客户。') +
-      `\n\n请输入作废原因 (员工记录用):`,
-      { title: '作废订单 / Void Order', defaultValue: '客户改主意' }
-    );
-    if (reason === null) return; // cancelled
-    const note = (reason || '').trim() || '未填写原因';
+    const res = await showVoidModal({
+      type: 'order',
+      title: `作废订单 / Void Order #${order.orderNo}`,
+      summary: `订单号 / No: #${order.orderNo}\n金额 / Total: ${sym}${order.total.toFixed(2)}\n付款 / Pay: ${methodLabel(order.paymentMethod)}`,
+      refundHint: hasMember
+        ? '💎 会员余额将自动退回 / Member balance will be refunded automatically.'
+        : '💵 现金/PayNow 需手动退给客户 / Refund cash or reverse PayNow manually.',
+    });
+    if (!res) return;
 
     try {
-      await GC.Store.voidOrder(orderId, { note });
-      GC.toast(`✅ 订单 #${order.orderNo} 已作废`, 'success');
-      // Close detail modal if open, then re-render orders view
-      const modal = document.getElementById('modal');
-      if (modal && modal.classList.contains('show')) {
-        modal.classList.remove('show'); modal.innerHTML = '';
-      }
+      await GC.Store.voidOrder(orderId, { note: res.reason, staff: res.staff });
+      GC.toast(`✅ 订单 #${order.orderNo} 已作废 (by ${res.staff})`, 'success');
+      const m = document.getElementById('modal');
+      if (m && m.classList.contains('show')) { m.classList.remove('show'); m.innerHTML = ''; }
+      render();
+    } catch (err) {
+      GC.toast('作废失败 / Failed: ' + err.message, 'error');
+    }
+  }
+
+  /** Session void flow — opens shared modal, calls store.voidSession. */
+  async function confirmAndVoidSession(sessionId) {
+    const session = GC.Store.getSessions().find(s => s.id === sessionId);
+    if (!session) return;
+    if (session.status === 'voided') return;
+    if (session.status === 'active') {
+      GC.toast('正在进行中的台不可作废，请先结账', 'error');
+      return;
+    }
+    const sym = GC.Store.getSettings().currencySymbol;
+    const isMember = !!session.memberId && session.paymentMethod === 'member_balance';
+
+    const res = await showVoidModal({
+      type: 'session',
+      title: `作废游戏台 / Void Session`,
+      summary: `机台 / Station: ${session.stationName} (${session.stationType || 'PS5'})\n` +
+               `时长 / Duration: ${session.durationMinutes || 0} min\n` +
+               `金额 / Total: ${sym}${session.total.toFixed(2)}\n` +
+               `付款 / Pay: ${methodLabel(session.paymentMethod || (isMember ? 'member_balance' : 'cash'))}`,
+      refundHint: isMember
+        ? '💎 会员余额将自动退回 + 累计消费/时长会扣减'
+        : '💵 现金/PayNow 需手动退给客户',
+    });
+    if (!res) return;
+
+    try {
+      await GC.Store.voidSession(sessionId, { note: res.reason, staff: res.staff });
+      GC.toast(`✅ ${session.stationName} 已作废 (by ${res.staff})`, 'success');
       render();
     } catch (err) {
       GC.toast('作废失败 / Failed: ' + err.message, 'error');

@@ -1866,6 +1866,7 @@ GC.Store = (function () {
 
     const actor = await getCurrentUserEmail();
     const note = opts.note || null;
+    const staff = opts.staff || null;  // staff name picked from dropdown
     const tenders = _cache.orderPayments.filter(p => p.orderId === orderId);
 
     // 1) Refund member-balance portions FIRST (atomic via RPC).
@@ -1897,7 +1898,7 @@ GC.Store = (function () {
     const idx = _cache.orders.findIndex(o => o.id === orderId);
     if (idx >= 0) _cache.orders[idx].status = 'voided';
 
-    // 3) Audit with actor + per-tender breakdown.
+    // 3) Audit with actor + per-tender breakdown + staff who clicked void.
     await sb.from('audit_log').insert({
       action: 'order_void',
       actor_email: actor,
@@ -1908,8 +1909,67 @@ GC.Store = (function () {
         member_id: order.memberId,
         tenders: tenders.map(t => ({ method: t.method, amount: t.amount })),
       },
-      after_state: { member_refunded: memberRefunded, note },
+      after_state: { member_refunded: memberRefunded, note, staff },
       note: note || `Voided order #${order.orderNo}`,
+      branch_id: order.branchId || _currentBranchId,
+    });
+  }
+
+  /**
+   * Void a completed gaming session. Migration 010 enables status='voided'.
+   * - If member session: refunds the charged total back to member balance
+   *   via apply_balance_delta (atomic RPC), also rolls back totalSpent.
+   * - Walk-in cash/PayNow sessions: just flips status; cash refund happens
+   *   manually at counter. Audit trail records who/why for reconciliation.
+   * opts: { note?, staff? }
+   */
+  async function voidSession(sessionId, opts = {}) {
+    const session = _cache.sessions.find(s => s.id === sessionId);
+    if (!session) throw new Error('Session not found');
+    if (session.status === 'voided') return;
+    if (session.status === 'active') {
+      throw new Error('正在进行中的台不可作废，请先结账 / Cannot void an active session — close it first');
+    }
+
+    const actor = await getCurrentUserEmail();
+    const note = opts.note || null;
+    const staff = opts.staff || null;
+
+    // 1) Refund to member balance if this was a member session.
+    let memberRefunded = 0;
+    if (session.memberId && session.paymentMethod === 'member_balance' && session.total > 0) {
+      await chargeBalance(session.memberId, Number(session.total), `void_session_${session.stationName}`);
+      memberRefunded = Number(session.total);
+      const m = getMember(session.memberId);
+      if (m) {
+        await updateMember(session.memberId, {
+          totalSpent: Math.max(0, m.totalSpent - memberRefunded),
+          totalMinutes: Math.max(0, m.totalMinutes - (session.durationMinutes || 0)),
+        });
+      }
+    }
+
+    // 2) Mark session voided.
+    const { error } = await sb.from('sessions').update({ status: 'voided' }).eq('id', sessionId);
+    if (error) throw error;
+    const idx = _cache.sessions.findIndex(s => s.id === sessionId);
+    if (idx >= 0) _cache.sessions[idx].status = 'voided';
+
+    // 3) Audit.
+    await sb.from('audit_log').insert({
+      action: 'session_void',
+      actor_email: actor,
+      before_state: {
+        station_name: session.stationName,
+        station_type: session.stationType,
+        total: session.total,
+        duration_minutes: session.durationMinutes,
+        payment: session.paymentMethod,
+        member_id: session.memberId,
+      },
+      after_state: { member_refunded: memberRefunded, note, staff },
+      note: note || `Voided session on ${session.stationName}`,
+      branch_id: session.branchId || _currentBranchId,
     });
   }
 
@@ -1973,7 +2033,7 @@ GC.Store = (function () {
     addMenuItem, updateMenuItem, deleteMenuItem,
     // Orders
     getOrders, getOrder, getOrderItemsForOrder, getOrderPaymentsFor,
-    createOrder, voidOrder,
+    createOrder, voidOrder, voidSession,
     // Daily close / Z-Report
     getDailySummary, getRangeSummary, getDailyCloses, closeDay,
     // Billing

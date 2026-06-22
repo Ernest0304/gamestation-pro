@@ -112,9 +112,18 @@ window.GC = window.GC || {};
     }
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.textContent = msg;
+    // Leading status icon panel + message (pro-grade — was bare text + stripe)
+    const icon = ({ success: 'ti-circle-check', error: 'ti-alert-circle', info: 'ti-info-circle' })[type] || 'ti-circle-check';
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.innerHTML = `<i class="ti ${icon}" aria-hidden="true"></i>`;
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'toast-msg';
+    msgSpan.textContent = msg;
+    el.appendChild(iconSpan);
+    el.appendChild(msgSpan);
     container.appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2500);
+    setTimeout(() => { el.classList.add('toast-out'); setTimeout(() => el.remove(), 250); }, 2600);
   };
 
   /* ---- Navigation ---- */

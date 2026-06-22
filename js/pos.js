@@ -182,7 +182,7 @@ GC.POS = (function () {
     const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
 
     const cartRows = cart.length === 0
-      ? '<div class="pos-cart-empty">购物车空空如也<br/><small>从左边选择商品加入</small></div>'
+      ? '<div class="pos-cart-empty"><i class="ti ti-shopping-cart pos-cart-empty-icon" aria-hidden="true"></i><div class="pos-cart-empty-title">购物车空空 / Cart is empty</div><small>点击左边商品加入 / Tap items on the left</small></div>'
       : cart.map(c => `
           <div class="pos-cart-item">
             <span class="pos-ci-emoji">${c.emoji}</span>

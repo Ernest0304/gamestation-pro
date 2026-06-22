@@ -21,11 +21,25 @@
   --purple: #8b5cf6;
   --amber: #f59e0b;
   --pink: #ec4899;
-  --radius: 14px;
-  --radius-sm: 10px;
-  --radius-xs: 6px;
+  /* Radius scale — collapsed from 17 ad-hoc values to 4 tokens (2026-05-14
+     pro-polish). lg=cards/panels, md=buttons/inputs, sm=tags/chips, xs=tiny. */
+  --radius-lg: 12px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  /* Elevation scale — 3 tokens replace hand-rolled box-shadows everywhere.
+     Dark-theme values; pos-mode (light) overrides below. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 14px 34px rgba(0, 0, 0, 0.40);
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-  --mono: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  --mono: 'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+/* Light POS-mode elevations — softer, brand-brown tinted */
+body.pos-mode {
+  --shadow-sm: 0 1px 2px rgba(120, 53, 15, 0.08);
+  --shadow-md: 0 4px 14px rgba(120, 53, 15, 0.10);
+  --shadow-lg: 0 12px 30px rgba(120, 53, 15, 0.14);
 }
 
 /* ===== Reset ===== */
@@ -41,6 +55,26 @@ body {
 a { color: inherit; text-decoration: none; }
 button { cursor: pointer; font-family: inherit; border: none; }
 input, select, textarea { font-family: inherit; }
+
+/* Money figures — mono + tabular so digits align across rows (2026-05-14
+   pro-polish). Consolidated rule covers every $ display in the app. */
+.stat-value,
+.settlement-row span:last-child,
+.settlement-row.total span,
+.tier-card-fee,
+.z-stat-value,
+.z-report-total strong,
+.pos-member-bal,
+.filter-result-value,
+.cash-due-amount,
+.cash-change-amount,
+.rcpt-amt, .rcpt-line.grand span,
+.split-amount-total,
+.detail-stat .stat-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
 
 /* ===== Navbar ===== */
 .navbar {
@@ -252,11 +286,10 @@ body.pos-mode .branch-switcher .branch-name { color: #7a0818; }
 }
 .station-card.active::before { background: linear-gradient(90deg, var(--cyan), #22d3ee); opacity: 1; }
 
-@keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 15px var(--cyan-glow), inset 0 0 15px rgba(6,182,212,0.03); }
-  50% { box-shadow: 0 0 30px var(--cyan-glow), inset 0 0 20px rgba(6,182,212,0.06); }
-}
-.station-card.active { animation: glow-pulse 2.5s ease-in-out infinite; }
+/* Active stations get a static cyan border (no infinite glow-pulse — was
+   running on every active card at once, too much ambient motion for a
+   commercial floor view. Glow is now reserved for warn/over-time states). */
+.station-card.active { box-shadow: var(--shadow-md); }
 
 /* station header */
 .station-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
@@ -324,16 +357,21 @@ body.pos-mode .branch-switcher .branch-name { color: #7a0818; }
   transition: all 0.2s; border: none;
 }
 .btn-block { width: 100%; }
+/* Flat solid buttons (2026-05-14 pro-polish) — was gradient + lift + glow,
+   which reads as a portfolio piece. Commercial POS (Square/Toast) use flat
+   fills with a 1-shade-darker hover. */
 .btn-primary {
-  background: linear-gradient(135deg, var(--cyan), #0891b2);
+  background: var(--cyan);
   color: #fff;
 }
-.btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 4px 15px var(--cyan-glow); }
+.btn-primary:hover { background: #0891b2; }
+.btn-primary:active { background: #0e7490; }
 .btn-danger {
-  background: linear-gradient(135deg, var(--red), #dc2626);
+  background: var(--red);
   color: #fff;
 }
-.btn-danger:hover { filter: brightness(1.1); transform: translateY(-1px); box-shadow: 0 4px 15px var(--red-glow); }
+.btn-danger:hover { background: #dc2626; }
+.btn-danger:active { background: #b91c1c; }
 .btn-secondary {
   background: var(--bg-input); color: var(--text-secondary);
   border: 1px solid var(--border);
@@ -407,7 +445,7 @@ body.pos-mode .branch-switcher .branch-name { color: #7a0818; }
   font-size: 0.9rem; transition: border-color 0.2s;
   outline: none;
 }
-.form-input:focus { border-color: var(--cyan); }
+.form-input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-glow); }
 .form-input::placeholder { color: var(--text-muted); }
 select.form-input { appearance: none; cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
@@ -454,8 +492,11 @@ select.form-input { appearance: none; cursor: pointer;
   border-radius: var(--radius); overflow: hidden;
 }
 .table-empty {
-  padding: 48px; text-align: center; color: var(--text-muted); font-size: 0.9rem;
+  padding: 48px 20px; text-align: center; color: var(--text-muted); font-size: 0.9rem;
 }
+.table-empty-icon { font-size: 2.4rem; color: var(--border-light); display: block; margin-bottom: 10px; line-height: 1; }
+.table-empty-title { font-size: 0.95rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px; }
+.table-empty small { font-size: 0.78rem; color: var(--text-muted); }
 
 /* ===== Members ===== */
 .members-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
@@ -957,15 +998,27 @@ select.form-input { appearance: none; cursor: pointer;
   display: flex; flex-direction: column; gap: 8px;
 }
 .toast {
-  padding: 12px 20px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 0;
+  border-radius: var(--radius);
   background: var(--bg-card); border: 1px solid var(--border-light);
-  font-size: 0.85rem; font-weight: 500;
-  animation: slideIn 0.3s ease;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  font-size: 0.875rem; font-weight: 500;
+  overflow: hidden;
+  animation: toastIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--shadow-lg);
+  min-width: 220px; max-width: 360px;
 }
-.toast.success { border-left: 3px solid var(--green); }
-.toast.error { border-left: 3px solid var(--red); }
-@keyframes slideIn { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+.toast-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; align-self: stretch;
+  font-size: 1.2rem; color: #fff;
+  flex-shrink: 0;
+}
+.toast-msg { padding: 13px 16px 13px 14px; line-height: 1.4; }
+.toast.success .toast-icon { background: var(--green); }
+.toast.error .toast-icon { background: var(--red); }
+.toast.info .toast-icon { background: var(--cyan); }
+.toast-out { opacity: 0; transform: translateX(20px); transition: all 0.25s ease; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 
 /* ===== Login Page ===== */
 .login-page {
@@ -1237,20 +1290,16 @@ select.form-input { appearance: none; cursor: pointer;
 }
 
 /* ===== Promo Banner ===== */
+/* Single two-stop brand gradient, static (was a 3-color rainbow with an 8s
+   shifting animation — read as a kids' app, not a commercial promo). */
 .promo-banner {
   position: relative;
-  background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 50%, #ec4899 100%);
-  background-size: 200% 200%;
-  animation: promo-shift 8s ease-in-out infinite;
-  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--purple), var(--cyan));
+  border-radius: var(--radius-lg);
   padding: 20px 28px;
   margin-bottom: 24px;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(124,58,237,0.25);
-}
-@keyframes promo-shift {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  box-shadow: var(--shadow-md);
 }
 .promo-banner-glow {
   position: absolute; inset: 0;

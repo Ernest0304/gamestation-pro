@@ -183,7 +183,7 @@ GC.Orders = (function () {
     rows.sort((a, b) => b.ts - a.ts);
 
     const tbody = rows.length === 0
-      ? `<tr><td colspan="8" class="table-empty">所选条件下没有记录 / No records in this range</td></tr>`
+      ? `<tr><td colspan="8" class="table-empty"><i class="ti ti-receipt-off table-empty-icon" aria-hidden="true"></i><div class="table-empty-title">所选条件下没有记录</div><small>No records in this range</small></td></tr>`
       : rows.map(r => r.html).join('');
 
     const catPill = (key, label) =>

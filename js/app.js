@@ -302,6 +302,12 @@ window.GC = window.GC || {};
      User sees it and knows "live sync may be slow, polling is still active". */
   function renderRealtimeStatus(detail) {
     let badge = document.getElementById('realtime-status-badge');
+    // Never show the status badge pre-login — a SIGNED_OUT triggers a realtime
+    // CLOSED event that would otherwise paint an "error" badge on the login screen.
+    if (!GC._currentView || document.querySelector('.login-split') || document.querySelector('.login-page')) {
+      if (badge) badge.remove();
+      return;
+    }
     const status = (detail && detail.status) || (GC.Store.getRealtimeStatus && GC.Store.getRealtimeStatus());
     const healthy = status === 'SUBSCRIBED';
     if (healthy) {

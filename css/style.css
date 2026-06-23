@@ -1061,25 +1061,18 @@ select.form-input { appearance: none; cursor: pointer;
   pointer-events: none;
 }
 .login-brand-inner { position: relative; margin-top: auto; }
-.login-logo-chip {
-  width: 92px; height: 92px; border-radius: 50%;
+.login-logo-card {
+  display: inline-flex; align-items: center; justify-content: center;
   background: #fff;
-  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-lg);
+  padding: 22px 26px;
   margin-bottom: 24px;
   box-shadow: 0 8px 28px rgba(0,0,0,0.28);
 }
-.login-logo-chip img { width: 74px; height: 74px; }
-.login-wordmark-zh {
-  font-size: 2.4rem; font-weight: 800; letter-spacing: 0.06em;
-  line-height: 1.1; margin-bottom: 2px;
-}
-.login-wordmark-en {
-  font-size: 0.82rem; font-weight: 500; letter-spacing: 0.28em;
-  opacity: 0.7; text-transform: uppercase; margin-bottom: 20px;
-}
+.login-logo-card img { width: 230px; max-width: 100%; height: auto; display: block; }
 .login-tagline {
   font-size: 1rem; opacity: 0.9; line-height: 1.6; margin-bottom: 28px;
-  max-width: 320px;
+  max-width: 340px;
 }
 .login-features {
   list-style: none; display: flex; flex-direction: column; gap: 12px;
@@ -1130,12 +1123,11 @@ select.form-input { appearance: none; cursor: pointer;
 /* Mobile: stack — brand becomes a compact top band */
 @media (max-width: 720px) {
   .login-split { grid-template-columns: 1fr; min-height: 100vh; }
-  .login-brand-panel { padding: 32px 28px; }
-  .login-brand-inner { margin-top: 0; }
-  .login-logo-chip { width: 64px; height: 64px; margin-bottom: 16px; }
-  .login-logo-chip img { width: 50px; height: 50px; }
-  .login-wordmark-zh { font-size: 1.8rem; }
-  .login-tagline { margin-bottom: 18px; }
+  .login-brand-panel { padding: 28px; align-items: center; }
+  .login-brand-inner { margin-top: 0; text-align: center; }
+  .login-logo-card { padding: 16px 18px; margin-bottom: 16px; }
+  .login-logo-card img { width: 180px; }
+  .login-tagline { margin-bottom: 0; margin-left: auto; margin-right: auto; }
   .login-features { display: none; }
   .login-brand-footer { display: none; }
   .login-form-panel { padding: 32px 28px; }

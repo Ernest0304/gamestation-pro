@@ -23,18 +23,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from run_sql import load_env, connect
 
 
-TABLES = [
-    'settings',
-    'stations',
-    'members',          # PRESERVED FOREVER (per owner policy)
-    'sessions',
-    'top_ups',
-    'orders',
-    'order_items',
-    'menu_categories',
-    'menu_items',
-    'audit_log',
-]
+# Tables are AUTO-DISCOVERED from the DB at runtime (see discover_tables).
+# A hardcoded list silently goes stale — the original list was missing
+# order_payments (the actual money/tender records!), daily_closes, branches,
+# branch_menu_pricing and staff_branches. Auto-discovery guarantees every
+# current AND future table is captured. (Foundation fix 2026-05-14.)
+
+
+def discover_tables(cur):
+    """Return every base table in the public schema, alphabetically."""
+    cur.execute("""
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+    """)
+    return [r[0] for r in cur.fetchall()]
 
 
 def table_to_json(cur, table):
@@ -63,14 +66,17 @@ def make_snapshot(out_dir: Path, snapshot_date: str):
     conn = connect(env)
     cur = conn.cursor()
 
+    tables = discover_tables(cur)
     snapshot = {
         'snapshot_date': snapshot_date,
         'generated_at': datetime.datetime.utcnow().isoformat() + 'Z',
-        'version': 1,
+        'version': 2,
+        'tables_captured': tables,
     }
-    for table in TABLES:
+    for table in tables:
         try:
             snapshot[table] = table_to_json(cur, table)
+            print(f'  · {table}: {len(snapshot[table])} rows', file=sys.stderr)
         except Exception as e:
             snapshot[table] = {'__error__': str(e)}
             print(f'  ⚠️  {table}: {e}', file=sys.stderr)

@@ -28,7 +28,31 @@ export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
 export YXD_BACKUP_FOLDER_ID=1AbCdEfGhIjKlMnOpQrStUv   # the Drive folder ID
 ```
 
-Or in GitHub Actions, set `GOOGLE_SERVICE_ACCOUNT_KEY` and `YXD_BACKUP_FOLDER_ID` as repository secrets.
+### Automated daily run (GitHub Actions) — LIVE
+
+`.github/workflows/daily-backup.yml` runs `daily_backup.py` every day at
+**02:00 SGT** (18:00 UTC, after the 01:00 close) and on manual trigger
+(Actions tab → Daily DB Backup → Run workflow).
+
+Every run uploads the snapshot as a **GitHub Actions artifact** (90-day
+retention) — so there is an off-site backup the moment you add the two
+required secrets, even before Google Drive is wired up.
+
+**Required repository secrets** (GitHub repo → Settings → Secrets and
+variables → Actions → New repository secret):
+
+| Secret | Required | Value |
+|--------|----------|-------|
+| `SUPABASE_DB_PASSWORD` | ✅ yes | from `gaming-cafe/.env` |
+| `SUPABASE_PROJECT_REF`  | ✅ yes | from `gaming-cafe/.env` (`oixcig…`) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | optional | service-account JSON (whole file contents) — enables Drive upload |
+| `YXD_BACKUP_FOLDER_ID` | optional | target Drive folder ID |
+
+Without the two Google secrets the backup still runs and is retained as a
+GitHub artifact; add them later to also push to Drive.
+
+The backup auto-discovers **every** table in the public schema at runtime
+(`discover_tables`) — it can never silently miss a new table again.
 
 Run manually:
 ```bash

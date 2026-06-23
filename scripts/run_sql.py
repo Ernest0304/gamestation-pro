@@ -28,6 +28,12 @@ def load_env():
             if '=' in line:
                 k, v = line.split('=', 1)
                 env[k.strip()] = v.strip()
+    # Fall back to real environment variables for anything not in .env.
+    # Lets the script run in CI (GitHub Actions) where secrets are passed
+    # as env vars and there is no .env file on disk.
+    for key in ('SUPABASE_DB_PASSWORD', 'SUPABASE_PROJECT_REF', 'SUPABASE_REGION'):
+        if key not in env and os.environ.get(key):
+            env[key] = os.environ[key]
     return env
 
 

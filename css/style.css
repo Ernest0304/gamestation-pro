@@ -1045,52 +1045,47 @@ select.form-input { appearance: none; cursor: pointer;
   grid-template-columns: 0.9fr 1.1fr;
   min-height: 100vh;
 }
+/* Brand panel is WARM CREAM — the logo is red ink on paper, so its natural
+   home is a cream surface, not a maroon panel that needs a white box behind
+   the logo. Full lockup (transparent bg) sits directly on the cream, no card.
+   Maroon stays as the accent (tagline, feature icons, footer, sign-in btn). */
 .login-brand-panel {
   position: relative;
-  background: linear-gradient(155deg, #7a0818 0%, #5a0512 60%, #3d0309 100%);
-  color: #fff;
-  display: flex; flex-direction: column; justify-content: space-between;
+  background: linear-gradient(155deg, #fdf8f0 0%, #f8efe0 55%, #f1e3cc 100%);
+  color: #6b3410;
+  display: flex; flex-direction: column; justify-content: center;
   padding: 48px 44px;
   overflow: hidden;
+  border-right: 1px solid #f0d9b8;
 }
 .login-brand-panel::before {
   content: ''; position: absolute; inset: 0;
   background:
-    radial-gradient(ellipse at 80% 0%, rgba(245,158,11,0.14), transparent 55%),
-    radial-gradient(ellipse at 0% 100%, rgba(255,255,255,0.06), transparent 50%);
+    radial-gradient(ellipse at 85% 5%, rgba(245,158,11,0.10), transparent 55%),
+    radial-gradient(ellipse at 0% 100%, rgba(122,8,24,0.05), transparent 50%);
   pointer-events: none;
 }
-.login-brand-inner { position: relative; margin-top: auto; }
-/* Seal-style brand mark — circular emblem sits directly on the maroon,
-   no white card. The logo's own red ring mediates the white disc against
-   the maroon so the edge reads as an intentional stamp, not a pasted box. */
-.login-seal {
-  width: 150px; height: 150px; border-radius: 50%;
-  margin-bottom: 22px;
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 16px 38px rgba(0,0,0,0.34);
-}
-.login-wordmark {
-  font-size: 2.4rem; font-weight: 800; letter-spacing: 0.1em;
-  color: #fff; line-height: 1; margin-bottom: 8px;
-}
-.login-sub-cn {
-  font-size: 0.9rem; letter-spacing: 0.2em; text-transform: uppercase;
-  color: rgba(255,255,255,0.66); margin-bottom: 24px;
+.login-brand-inner { position: relative; }
+/* Full logo lockup, transparent bg, printed straight on the cream. No box. */
+.login-logo-mark {
+  width: 300px; max-width: 100%; height: auto;
+  display: block; margin-bottom: 28px;
 }
 .login-tagline {
-  font-size: 1rem; opacity: 0.9; line-height: 1.6; margin-bottom: 28px;
-  max-width: 340px;
+  font-size: 1rem; color: #7a0818; line-height: 1.6; margin-bottom: 28px;
+  max-width: 340px; font-weight: 500;
 }
 .login-features {
   list-style: none; display: flex; flex-direction: column; gap: 12px;
 }
 .login-features li {
   display: flex; align-items: center; gap: 12px;
-  font-size: 0.92rem; opacity: 0.92;
+  font-size: 0.92rem; color: #6b3410;
 }
-.login-features i { font-size: 1.25rem; opacity: 0.85; width: 24px; text-align: center; }
+.login-features i { font-size: 1.25rem; color: #b45309; width: 24px; text-align: center; }
 .login-brand-footer {
-  position: relative; font-size: 0.78rem; opacity: 0.55; letter-spacing: 0.02em;
+  position: absolute; left: 44px; bottom: 40px;
+  font-size: 0.78rem; color: #92775a; letter-spacing: 0.02em;
 }
 
 .login-form-panel {
@@ -1130,12 +1125,10 @@ select.form-input { appearance: none; cursor: pointer;
 /* Mobile: stack — brand becomes a compact top band */
 @media (max-width: 720px) {
   .login-split { grid-template-columns: 1fr; min-height: 100vh; }
-  .login-brand-panel { padding: 28px; align-items: center; }
+  .login-brand-panel { padding: 26px 28px; align-items: center; border-right: none; border-bottom: 1px solid #f0d9b8; }
   .login-brand-inner { margin-top: 0; text-align: center; }
-  .login-seal { width: 96px; height: 96px; margin-bottom: 14px; }
-  .login-wordmark { font-size: 1.8rem; }
-  .login-sub-cn { margin-bottom: 14px; }
-  .login-tagline { margin-bottom: 0; margin-left: auto; margin-right: auto; }
+  .login-logo-mark { width: 200px; margin: 0 auto 12px; }
+  .login-tagline { margin-bottom: 0; margin-left: auto; margin-right: auto; font-size: 0.9rem; }
   .login-features { display: none; }
   .login-brand-footer { display: none; }
   .login-form-panel { padding: 32px 28px; }

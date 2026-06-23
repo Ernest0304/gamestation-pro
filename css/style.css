@@ -1021,32 +1021,102 @@ select.form-input { appearance: none; cursor: pointer;
 @keyframes toastIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
 
 /* ===== Login Page ===== */
+/* ===== Login — commercial split screen (2026-05-14) ===== */
+/* Boot loading screen (index.html) reuses .login-page + .login-card —
+   keep those as a simple centered card. */
 .login-page {
   display: flex; align-items: center; justify-content: center;
-  min-height: calc(100vh - 64px);
+  min-height: 100vh;
   padding: 20px;
 }
 .login-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   padding: 40px 36px;
-  width: 100%; max-width: 400px;
-  animation: slideUp 0.3s ease;
+  width: 100%; max-width: 380px;
+  text-align: center;
 }
-.login-brand {
-  text-align: center; margin-bottom: 32px;
+.login-subtitle { color: var(--text-muted); font-size: 0.85rem; margin-top: 6px; }
+
+/* Full split-screen login */
+.login-split {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  min-height: 100vh;
 }
-.login-brand svg { color: var(--cyan); margin-bottom: 12px; }
-.login-brand h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
-.login-subtitle {
-  color: var(--text-muted); font-size: 0.85rem; margin-top: 6px;
+.login-brand-panel {
+  position: relative;
+  background: linear-gradient(155deg, #7a0818 0%, #5a0512 60%, #3d0309 100%);
+  color: #fff;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 48px 44px;
+  overflow: hidden;
 }
+.login-brand-panel::before {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at 80% 0%, rgba(245,158,11,0.14), transparent 55%),
+    radial-gradient(ellipse at 0% 100%, rgba(255,255,255,0.06), transparent 50%);
+  pointer-events: none;
+}
+.login-brand-inner { position: relative; margin-top: auto; }
+.login-logo-chip {
+  width: 92px; height: 92px; border-radius: 50%;
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 24px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+}
+.login-logo-chip img { width: 74px; height: 74px; }
+.login-wordmark-zh {
+  font-size: 2.4rem; font-weight: 800; letter-spacing: 0.06em;
+  line-height: 1.1; margin-bottom: 2px;
+}
+.login-wordmark-en {
+  font-size: 0.82rem; font-weight: 500; letter-spacing: 0.28em;
+  opacity: 0.7; text-transform: uppercase; margin-bottom: 20px;
+}
+.login-tagline {
+  font-size: 1rem; opacity: 0.9; line-height: 1.6; margin-bottom: 28px;
+  max-width: 320px;
+}
+.login-features {
+  list-style: none; display: flex; flex-direction: column; gap: 12px;
+}
+.login-features li {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 0.92rem; opacity: 0.92;
+}
+.login-features i { font-size: 1.25rem; opacity: 0.85; width: 24px; text-align: center; }
+.login-brand-footer {
+  position: relative; font-size: 0.78rem; opacity: 0.55; letter-spacing: 0.02em;
+}
+
+.login-form-panel {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-primary);
+  padding: 40px;
+}
+.login-form-wrap { width: 100%; max-width: 360px; }
+.login-form-title { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px; }
+.login-form-sub { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 32px; }
+.login-input { height: 48px; font-size: 1rem; }
+.login-submit {
+  width: 100%; height: 50px; margin-top: 8px;
+  background: #7a0818; color: #fff;
+  border: none; border-radius: var(--radius);
+  font-size: 1rem; font-weight: 700; letter-spacing: 0.02em;
+  cursor: pointer; transition: background 0.15s;
+}
+.login-submit:hover:not(:disabled) { background: #5a0512; }
+.login-submit:disabled { opacity: 0.6; cursor: default; }
+
 .login-error {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: var(--red);
-  padding: 10px 14px; border-radius: var(--radius-sm);
+  padding: 10px 14px; border-radius: var(--radius);
   font-size: 0.85rem; margin-bottom: 16px;
 }
 .login-spinner {
@@ -1056,6 +1126,20 @@ select.form-input { appearance: none; cursor: pointer;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Mobile: stack — brand becomes a compact top band */
+@media (max-width: 720px) {
+  .login-split { grid-template-columns: 1fr; min-height: 100vh; }
+  .login-brand-panel { padding: 32px 28px; }
+  .login-brand-inner { margin-top: 0; }
+  .login-logo-chip { width: 64px; height: 64px; margin-bottom: 16px; }
+  .login-logo-chip img { width: 50px; height: 50px; }
+  .login-wordmark-zh { font-size: 1.8rem; }
+  .login-tagline { margin-bottom: 18px; }
+  .login-features { display: none; }
+  .login-brand-footer { display: none; }
+  .login-form-panel { padding: 32px 28px; }
+}
 
 /* ===== Logout button in navbar ===== */
 #logout-btn {

@@ -7,25 +7,48 @@ GC.Auth = (function () {
 
   function renderLogin() {
     document.querySelector('.navbar').style.display = 'none';
+    // Login screen is always dark-themed. Clear pos-mode (set while the POS
+    // view was active) so the form text/inputs don't inherit the light POS
+    // overrides → would render dark-on-dark + unreadable "欢迎回来".
+    document.body.classList.remove('pos-mode');
+    // Remove the realtime status badge if it lingers from a live logout.
+    const rtBadge = document.getElementById('realtime-status-badge');
+    if (rtBadge) rtBadge.remove();
     document.getElementById('main-content').innerHTML = `
-      <div class="login-page">
-        <div class="login-card">
-          <div class="login-brand">
-            <img src="/img/logo.svg" alt="郁香潭 Yuu Xiang Dam" style="width:120px;height:120px;margin-bottom:6px;filter:drop-shadow(0 4px 12px rgba(122,8,24,0.3))">
-            <p class="login-subtitle">点单 · 收银 · 游戏台 计费系统</p>
+      <div class="login-split">
+        <div class="login-brand-panel">
+          <div class="login-brand-inner">
+            <div class="login-logo-chip">
+              <img src="/img/logo.svg" alt="郁香潭 Yuu Xiang Dam">
+            </div>
+            <h1 class="login-wordmark-zh">郁香潭</h1>
+            <p class="login-wordmark-en">YUU XIANG DAM</p>
+            <p class="login-tagline">点单 · 收银 · 游戏台计费一体化系统</p>
+            <ul class="login-features">
+              <li><i class="ti ti-device-ipad-horizontal" aria-hidden="true"></i> 多店多机实时同步</li>
+              <li><i class="ti ti-device-gamepad-2" aria-hidden="true"></i> 游戏台计时计费</li>
+              <li><i class="ti ti-report-money" aria-hidden="true"></i> 日结报表与对账</li>
+            </ul>
           </div>
-          <form id="login-form">
-            <div class="form-group">
-              <label class="form-label">邮箱</label>
-              <input type="email" id="login-email" class="form-input" placeholder="输入邮箱地址" required autofocus>
-            </div>
-            <div class="form-group">
-              <label class="form-label">密码</label>
-              <input type="password" id="login-password" class="form-input" placeholder="输入密码" required>
-            </div>
-            <div id="login-error" class="login-error" style="display:none"></div>
-            <button type="submit" class="btn btn-primary btn-block" id="login-btn">登录</button>
-          </form>
+          <div class="login-brand-footer">郁香潭 POS · Kallang &amp; Geylang</div>
+        </div>
+        <div class="login-form-panel">
+          <div class="login-form-wrap">
+            <h2 class="login-form-title">欢迎回来</h2>
+            <p class="login-form-sub">登录以继续 / Sign in to continue</p>
+            <form id="login-form">
+              <div class="form-group">
+                <label class="form-label">邮箱 / Email</label>
+                <input type="email" id="login-email" class="form-input login-input" placeholder="name@example.com" required autofocus>
+              </div>
+              <div class="form-group">
+                <label class="form-label">密码 / Password</label>
+                <input type="password" id="login-password" class="form-input login-input" placeholder="••••••••" required>
+              </div>
+              <div id="login-error" class="login-error" style="display:none"></div>
+              <button type="submit" class="login-submit" id="login-btn">登录 / Sign in</button>
+            </form>
+          </div>
         </div>
       </div>`;
 

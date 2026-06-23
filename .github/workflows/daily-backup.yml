@@ -1,0 +1,33 @@
+name: Daily DB Backup
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install psycopg2-binary google-api-python-client google-auth
+      - name: Run backup
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          YXD_BACKUP_FOLDER_ID: ${{ secrets.YXD_BACKUP_FOLDER_ID }}
+        run: python3 scripts/backup/daily_backup.py
+      - name: Upload snapshot as artifact (off-site backup, 90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: yxd-db-backup-${{ github.run_id }}
+          path: scripts/backup/output/*.json
+          retention-days: 90
+          if-no-files-found: error

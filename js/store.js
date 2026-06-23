@@ -480,6 +480,7 @@ GC.Store = (function () {
           _cache.sessions = _cache.sessions.filter(x => x.id !== payload.old.id);
         }
         if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stations' }, (payload) => {
         if (payload.new) {
@@ -487,6 +488,7 @@ GC.Store = (function () {
           const i = _cache.stations.findIndex(x => x.id === s.id);
           if (i >= 0) _cache.stations[i] = s;
           if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
+          if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
         }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'members' }, (payload) => {
@@ -503,6 +505,7 @@ GC.Store = (function () {
         }
         if (GC._currentView === 'members' && GC.Members) GC.Members.render();
         if (GC._currentView === 'dashboard' && GC.Dashboard) GC.Dashboard.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
       })
       // IT S1-B: orders + order_payments + top_ups + daily_closes were NOT subscribed.
       // Two iPads ringing up orders independently saw stale Z-Report data forever.
@@ -518,7 +521,9 @@ GC.Store = (function () {
           _cache.orders = _cache.orders.filter(x => x.id !== payload.old.id);
         }
         if (GC._currentView === 'orders' && GC.Orders) GC.Orders.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
         if (GC._currentView === 'history' && GC.History) GC.History.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_payments' }, (payload) => {
         if (payload.eventType === 'INSERT' && payload.new) {
@@ -528,6 +533,7 @@ GC.Store = (function () {
           _cache.orderPayments = _cache.orderPayments.filter(x => x.id !== payload.old.id);
         }
         if (GC._currentView === 'history' && GC.History) GC.History.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'top_ups' }, (payload) => {
         if (payload.eventType === 'INSERT' && payload.new) {
@@ -535,6 +541,7 @@ GC.Store = (function () {
           if (!_cache.topUps.find(x => x.id === t.id)) _cache.topUps.unshift(t);
         }
         if (GC._currentView === 'history' && GC.History) GC.History.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
         if (GC._currentView === 'members' && GC.Members) GC.Members.render();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_closes' }, (payload) => {
@@ -547,6 +554,7 @@ GC.Store = (function () {
           _cache.dailyCloses.unshift(c);
         }
         if (GC._currentView === 'history' && GC.History) GC.History.render();
+        if (GC._currentView === 'admin' && GC.Admin) GC.Admin.render();
       })
       // Multi-branch subscriptions (Migration 009)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, (payload) => {

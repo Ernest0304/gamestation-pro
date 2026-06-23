@@ -1573,3 +1573,103 @@ select.form-input { appearance: none; cursor: pointer;
   .tier-card-fee { font-size: 1.25rem; }
   .rate-input-group .form-input.settings-input { width: 65px; }
 }
+
+/* ===== Admin console (C.3 — owner-only cross-branch dashboard) ===== */
+.admin-view { max-width: 1200px; margin: 0 auto; }
+.admin-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 22px; flex-wrap: wrap; gap: 12px;
+}
+.admin-title {
+  font-size: 1.5rem; font-weight: 800; letter-spacing: -0.01em;
+  display: flex; align-items: center; gap: 10px;
+}
+.admin-title i { color: var(--cyan); }
+.admin-title-en { font-size: 0.95rem; font-weight: 500; color: var(--text-muted); letter-spacing: 0.02em; }
+.admin-subtitle { font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px; }
+.admin-live-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(16,185,129,0.12); color: var(--green);
+  border: 1px solid rgba(16,185,129,0.3);
+  padding: 6px 14px; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em;
+}
+.admin-live-badge i { font-size: 0.6rem; animation: livepulse 2s ease-in-out infinite; }
+@keyframes livepulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+.admin-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px; margin-bottom: 28px;
+}
+.admin-kpi {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.admin-kpi.accent { border-color: rgba(6,182,212,0.4); background: rgba(6,182,212,0.06); }
+.admin-kpi-label { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.admin-kpi-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
+.admin-kpi.accent .admin-kpi-value { color: var(--cyan); }
+
+.admin-section { font-size: 1rem; font-weight: 700; margin: 0 0 14px; display: flex; align-items: baseline; gap: 10px; }
+.admin-section small { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; }
+
+.admin-branch-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px; margin-bottom: 30px;
+}
+.admin-branch-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 18px 20px;
+  border-left: 3px solid var(--border-light);
+}
+.admin-branch-card.kallang { border-left-color: var(--cyan); }
+.admin-branch-card.geylang { border-left-color: var(--amber); }
+.admin-branch-card.inactive { opacity: 0.7; }
+.admin-branch-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+.admin-branch-name { font-size: 1.15rem; font-weight: 800; display: flex; align-items: baseline; gap: 8px; }
+.admin-branch-en { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
+.admin-branch-tags { display: flex; gap: 6px; margin-top: 6px; }
+.admin-tag { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 4px; }
+.admin-tag.gaming { background: rgba(59,130,246,0.15); color: var(--blue); }
+.admin-tag.live { background: rgba(16,185,129,0.14); color: var(--green); }
+.admin-tag.inactive { background: rgba(245,158,11,0.16); color: var(--amber); }
+.admin-tag i { font-size: 0.6rem; }
+.admin-branch-revenue { text-align: right; }
+.admin-branch-revenue-val { display: block; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 1.5rem; font-weight: 800; color: var(--green); }
+.admin-branch-revenue-lbl { font-size: 0.7rem; color: var(--text-muted); }
+.admin-branch-stats { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; }
+.admin-branch-stats i { color: var(--text-muted); margin-right: 3px; }
+.admin-branch-stats .live-pill { color: var(--green); font-weight: 600; }
+.admin-branch-stats .void-pill { color: var(--red); }
+.admin-method-bars { display: flex; flex-direction: column; gap: 7px; }
+.admin-method-row { display: grid; grid-template-columns: 56px 1fr 72px; align-items: center; gap: 8px; font-size: 0.78rem; }
+.admin-method-label { color: var(--text-secondary); }
+.admin-method-track { height: 8px; background: var(--bg-input); border-radius: 4px; overflow: hidden; }
+.admin-method-fill { height: 100%; border-radius: 4px; }
+.admin-method-fill.cash { background: var(--green); }
+.admin-method-fill.paynow { background: var(--blue); }
+.admin-method-fill.member { background: var(--purple); }
+.admin-method-fill.grab { background: #00b450; }
+.admin-method-fill.foodpanda { background: #d92a76; }
+.admin-method-amt { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
+.admin-empty-mini { font-size: 0.78rem; color: var(--text-muted); padding: 8px 0; }
+
+.admin-feed-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.admin-feed-table { margin: 0; }
+.admin-feed-time { font-family: var(--mono); color: var(--text-secondary); font-size: 0.82rem; }
+.admin-branch-chip { font-size: 0.72rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--bg-input); color: var(--text-secondary); }
+.admin-branch-chip.kallang { background: rgba(6,182,212,0.14); color: var(--cyan); }
+.admin-branch-chip.geylang { background: rgba(245,158,11,0.16); color: var(--amber); }
+.admin-feed-kind { display: inline-flex; width: 22px; }
+.admin-feed-kind.order { color: var(--amber); }
+.admin-feed-kind.session { color: var(--blue); }
+.admin-feed-sub { color: var(--text-muted); font-size: 0.82rem; }
+.admin-feed-amt { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+.nav-link-admin .nav-cn { color: var(--cyan); }
+
+@media (max-width: 640px) {
+  .admin-kpi-value { font-size: 1.4rem; }
+  .admin-branch-grid { grid-template-columns: 1fr; }
+  .admin-feed-sub { display: none; }
+}

@@ -12,9 +12,11 @@ window.GC = window.GC || {};
     history: GC.History,
     members: GC.Members,
     settings: GC.Settings,
+    admin: GC.Admin,
   };
 
   GC._currentView = null;
+  GC._myRole = null;   // resolved at boot — 'owner' | 'manager' | 'cashier'
 
   /* ---- HTML escape (prevents XSS via member.name, guest_name, etc) ---- */
   const _escMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -128,6 +130,11 @@ window.GC = window.GC || {};
 
   /* ---- Navigation ---- */
   function navigate(name) {
+    // Admin console is owner-only — bounce non-owners back to POS.
+    if (name === 'admin' && GC._myRole !== 'owner') {
+      if (GC.toast) GC.toast('仅限管理员 / Owner only', 'error');
+      name = 'pos';
+    }
     if (GC._currentView && views[GC._currentView] && views[GC._currentView].destroy) {
       views[GC._currentView].destroy();
     }
@@ -135,7 +142,8 @@ window.GC = window.GC || {};
     document.querySelectorAll('.nav-link').forEach(l => {
       l.classList.toggle('active', l.dataset.view === name);
     });
-    // Toggle full-page light theme when on POS (per owner: 整页亮色一体感)
+    // Toggle full-page light theme when on POS (per owner: 整页亮色一体感).
+    // Admin is its own dark pro theme — never pos-mode.
     document.body.classList.toggle('pos-mode', name === 'pos');
     if (views[name]) views[name].render();
   }
@@ -147,6 +155,22 @@ window.GC = window.GC || {};
         navigate(link.dataset.view);
       });
     });
+  }
+
+  // Owner-only "后台 / Admin" nav entry — injected after login so cashiers
+  // never see it. Appended to the end of nav-links.
+  function injectAdminNav() {
+    if (GC._myRole !== 'owner') return;
+    if (document.querySelector('.nav-link[data-view="admin"]')) return;
+    const links = document.querySelector('.nav-links');
+    if (!links) return;
+    const a = document.createElement('a');
+    a.href = '#';
+    a.className = 'nav-link nav-link-admin';
+    a.dataset.view = 'admin';
+    a.innerHTML = '<span class="nav-cn"><i class="ti ti-layout-dashboard"></i> 后台</span><small class="nav-en">Admin</small>';
+    a.addEventListener('click', e => { e.preventDefault(); navigate('admin'); });
+    links.appendChild(a);
   }
 
   /* ---- Branch switcher (Migration 009, Wave C.1) ----
@@ -375,9 +399,12 @@ window.GC = window.GC || {};
         };
         document.addEventListener('click', onceClick);
       }
+      // Resolve role once so navigate()/nav can sync-check owner status.
+      GC._myRole = await GC.Store.getMyRole().catch(() => null);
       GC.Auth.showNavbar();
       bindNav();
       renderBranchSwitcher();
+      injectAdminNav();
       navigate('pos');
     } catch (e) {
       console.error('Boot failed:', e);

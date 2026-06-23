@@ -18,9 +18,9 @@ GC.Auth = (function () {
       <div class="login-split">
         <div class="login-brand-panel">
           <div class="login-brand-inner">
-            <div class="login-logo-card">
-              <img src="/img/logo-full.png" alt="郁香潭 Yuu Xiang Dam Dessert">
-            </div>
+            <img src="/img/logo-circle.png" alt="郁香潭 Yuu Xiang Dam" class="login-seal">
+            <h1 class="login-wordmark">郁香潭</h1>
+            <p class="login-sub-cn">甜品 · Dessert</p>
             <p class="login-tagline">点单 · 收银 · 游戏台计费一体化系统</p>
             <ul class="login-features">
               <li><i class="ti ti-device-ipad-horizontal" aria-hidden="true"></i> 多店多机实时同步</li>

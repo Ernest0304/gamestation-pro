@@ -1061,15 +1061,22 @@ select.form-input { appearance: none; cursor: pointer;
   pointer-events: none;
 }
 .login-brand-inner { position: relative; margin-top: auto; }
-.login-logo-card {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: #fff;
-  border-radius: var(--radius-lg);
-  padding: 22px 26px;
-  margin-bottom: 24px;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+/* Seal-style brand mark — circular emblem sits directly on the maroon,
+   no white card. The logo's own red ring mediates the white disc against
+   the maroon so the edge reads as an intentional stamp, not a pasted box. */
+.login-seal {
+  width: 150px; height: 150px; border-radius: 50%;
+  margin-bottom: 22px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 16px 38px rgba(0,0,0,0.34);
 }
-.login-logo-card img { width: 230px; max-width: 100%; height: auto; display: block; }
+.login-wordmark {
+  font-size: 2.4rem; font-weight: 800; letter-spacing: 0.1em;
+  color: #fff; line-height: 1; margin-bottom: 8px;
+}
+.login-sub-cn {
+  font-size: 0.9rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: rgba(255,255,255,0.66); margin-bottom: 24px;
+}
 .login-tagline {
   font-size: 1rem; opacity: 0.9; line-height: 1.6; margin-bottom: 28px;
   max-width: 340px;
@@ -1125,8 +1132,9 @@ select.form-input { appearance: none; cursor: pointer;
   .login-split { grid-template-columns: 1fr; min-height: 100vh; }
   .login-brand-panel { padding: 28px; align-items: center; }
   .login-brand-inner { margin-top: 0; text-align: center; }
-  .login-logo-card { padding: 16px 18px; margin-bottom: 16px; }
-  .login-logo-card img { width: 180px; }
+  .login-seal { width: 96px; height: 96px; margin-bottom: 14px; }
+  .login-wordmark { font-size: 1.8rem; }
+  .login-sub-cn { margin-bottom: 14px; }
   .login-tagline { margin-bottom: 0; margin-left: auto; margin-right: auto; }
   .login-features { display: none; }
   .login-brand-footer { display: none; }

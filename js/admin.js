@@ -10,11 +10,9 @@
 window.GC = window.GC || {};
 
 GC.Admin = (function () {
-  function sgtToday() {
-    const now = new Date();
-    const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
-    return sgt.toISOString().slice(0, 10);
-  }
+  // Business date (06:00 SGT cutoff) — keeps the console's "today" aligned
+  // with the Z-Report through the 00:00-01:00 closing hour.
+  function sgtToday() { return GC.Store.getBusinessDate(); }
 
   const METHODS = [
     { key: 'cash', label: '现金', cls: 'cash' },

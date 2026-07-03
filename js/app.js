@@ -128,6 +128,64 @@ window.GC = window.GC || {};
     setTimeout(() => { el.classList.add('toast-out'); setTimeout(() => el.remove(), 250); }, 2600);
   };
 
+  /* ---- Manager PIN gate (Tier 0.5, 2026-06-23) ----
+     Interim control until per-staff accounts (Tier A1): sensitive actions
+     (void, large discounts) prompt for a shared manager PIN stored as a
+     sha256 hex in settings.manager_pin. NULL/unset → gate is disabled, so
+     staff aren't locked out before the owner sets a PIN in 设置.
+     Static markup + GC.esc'd label — XSS-safe (house pattern). */
+  GC.sha256Hex = async function (str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  GC.requireManagerPin = function (actionLabel) {
+    return new Promise(resolve => {
+      const settings = GC.Store.getSettings && GC.Store.getSettings();
+      const pinHash = settings && settings.managerPin;
+      if (!pinHash) { resolve(true); return; }   // gate disabled until PIN set
+
+      const modal = document.getElementById('modal');
+      modal.innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-content" style="max-width:360px">
+            <div class="modal-header">
+              <h3><i class="ti ti-lock"></i> 经理授权 / Manager PIN</h3>
+              <button class="modal-close" id="pin-close">&times;</button>
+            </div>
+            <div class="modal-body">
+              <p style="font-size:0.88rem;color:var(--text-secondary);margin-bottom:12px">
+                ${GC.esc(actionLabel || '此操作')} 需要经理 PIN 授权
+              </p>
+              <input type="password" id="pin-input" class="form-input" inputmode="numeric"
+                autocomplete="off" placeholder="••••" maxlength="8"
+                style="font-size:1.4rem;text-align:center;letter-spacing:0.4em">
+              <div id="pin-error" class="login-error" style="display:none;margin-top:10px">PIN 错误 / Wrong PIN</div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-secondary" id="pin-cancel">取消 / Cancel</button>
+              <button class="btn btn-primary" id="pin-ok">确认 / Confirm</button>
+            </div>
+          </div>
+        </div>`;
+      modal.classList.add('show');
+      const input = document.getElementById('pin-input');
+      const close = (ok) => { modal.classList.remove('show'); modal.innerHTML = ''; resolve(ok); };
+      document.getElementById('pin-close').onclick = () => close(false);
+      document.getElementById('pin-cancel').onclick = () => close(false);
+      const verify = async () => {
+        const hash = await GC.sha256Hex(input.value.trim());
+        if (hash === pinHash) { close(true); return; }
+        document.getElementById('pin-error').style.display = 'block';
+        input.value = '';
+        input.focus();
+      };
+      document.getElementById('pin-ok').onclick = verify;
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') verify(); });
+      setTimeout(() => input.focus(), 60);
+    });
+  };
+
   /* ---- Navigation ---- */
   function navigate(name) {
     // Admin console is owner-only — bounce non-owners back to POS.
@@ -356,6 +414,32 @@ window.GC = window.GC || {};
     badge.classList.toggle('error', /ERROR|TIMED_OUT|CLOSED/.test(status));
   }
   window.addEventListener('gc:realtime-status', (e) => renderRealtimeStatus(e.detail));
+
+  /* ---- Offline guard (Tier 0.6, 2026-07-03) ----
+     Every write goes to Supabase, so taking a payment while offline means
+     a "completed" checkout that never reached the DB. When the browser
+     reports offline: show a red top banner and disable the checkout/pay
+     controls until connectivity returns. */
+  function renderOfflineState() {
+    const offline = !navigator.onLine;
+    let banner = document.getElementById('offline-banner');
+    if (offline && !banner) {
+      banner = document.createElement('div');
+      banner.id = 'offline-banner';
+      banner.className = 'offline-banner';
+      banner.innerHTML = '<i class="ti ti-wifi-off" aria-hidden="true"></i> 网络已断开 — 收银暂停，恢复网络后自动解锁 / Offline — checkout paused';
+      document.body.appendChild(banner);
+    } else if (!offline && banner) {
+      banner.remove();
+      if (GC.toast) GC.toast('网络已恢复 / Back online', 'success');
+    }
+    // Money-taking controls are blocked purely via CSS (body.is-offline
+    // pointer-events) — never touch .disabled here, or we'd re-enable
+    // buttons the views disabled for their own reasons (e.g. empty cart).
+    document.body.classList.toggle('is-offline', offline);
+  }
+  window.addEventListener('online', renderOfflineState);
+  window.addEventListener('offline', renderOfflineState);
 
   // Re-evaluate floating-vs-inline placement on viewport resize / orientation
   // change. Handles devtools device-mode swapping AND real device rotation.

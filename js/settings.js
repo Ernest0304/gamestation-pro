@@ -143,6 +143,26 @@ GC.Settings = (function () {
         </div>
       </div>
 
+      <!-- Store ops (Migration 012 / Tier 0.5 + 0.9) -->
+      <div class="settings-section">
+        <div class="settings-title">门店 / Store</div>
+        <div class="settings-row">
+          <div class="settings-label">外带打包费<small>Takeaway box fee per order</small></div>
+          <div class="rate-input-group">
+            <span class="rate-prefix">${sym}</span>
+            <input type="number" id="takeaway-charge" class="form-input settings-input" value="${(s.takeawayCharge != null ? s.takeawayCharge : 0.20).toFixed(2)}" min="0" step="0.05">
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">员工名单<small>Staff names for void/discount attribution — comma separated</small></div>
+          <input type="text" id="staff-names" class="form-input" style="min-width:280px" value="${GC.esc((s.staffNames || []).join(', '))}">
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">经理 PIN<small>${s.managerPin ? '已设置 — 输入新 PIN 可更换；留空保持不变' : '未设置 — 设置后作废/大额折扣需要 PIN'}</small></div>
+          <input type="password" id="manager-pin" class="form-input settings-input" inputmode="numeric" maxlength="8" placeholder="${s.managerPin ? '••••' : '4-8 位数字'}" autocomplete="new-password" style="width:140px;text-align:center">
+        </div>
+      </div>
+
       <!-- Data -->
       <div class="settings-section">
         <div class="settings-title">数据管理 / Data Management</div>
@@ -209,7 +229,21 @@ GC.Settings = (function () {
         maxPlayersPerStation: Math.max(1, Math.min(6, parseInt(document.getElementById('max-players').value) || 4)),
         currencySymbol: document.getElementById('currency-sym').value || '$',
         minBillingMinutes: 0,
+        // Store ops (Tier 0.5 + 0.9)
+        takeawayCharge: Math.max(0, parseFloat(document.getElementById('takeaway-charge').value) || 0),
+        staffNames: document.getElementById('staff-names').value
+          .split(',').map(x => x.trim()).filter(Boolean),
+        managerPin: s.managerPin || null,   // may be replaced below
       };
+      // PIN field: blank = keep existing; a new value is hashed before save.
+      const pinRaw = document.getElementById('manager-pin').value.trim();
+      if (pinRaw) {
+        if (!/^\d{4,8}$/.test(pinRaw)) {
+          GC.toast('PIN 需为 4-8 位数字 / PIN must be 4-8 digits', 'error');
+          return;
+        }
+        newSettings.managerPin = await GC.sha256Hex(pinRaw);
+      }
       await GC.Store.saveSettings(newSettings);
       GC.toast('设置已保存 / Settings saved', 'success');
     });

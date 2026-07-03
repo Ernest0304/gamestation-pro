@@ -8,13 +8,16 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>郁香潭 · Yuu Xiang Dam — POS</title>
-  <!-- Tabler outline icon webfont (pro-grade stroke icons; replaces ad-hoc emoji) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
-  <!-- JetBrains Mono for tabular-aligned $ figures on receipts + reports -->
+  <!-- Tabler outline icon webfont — self-hosted (Tier 0.6: POS must not
+       depend on a CDN; a network blip used to blank every icon) -->
+  <link rel="stylesheet" href="/vendor/tabler-icons.min.css?v=50">
+  <!-- JetBrains Mono for tabular-aligned $ figures. Kept on Google Fonts:
+       the --mono stack falls back to local SF Mono/Menlo offline, so this
+       degrades gracefully instead of breaking. -->
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=49">
-  <link rel="stylesheet" href="css/pos.css?v=49">
+  <link rel="stylesheet" href="css/style.css?v=50">
+  <link rel="stylesheet" href="css/pos.css?v=50">
   <link rel="manifest" href="manifest.json">
   <!-- Favicon: official YUU XIANG DAM circle mark (PNG, regenerated 2026-06-23) -->
   <link rel="icon" href="/img/favicon-32.png" sizes="32x32" type="image/png">
@@ -54,27 +57,28 @@
   </main>
   <div id="modal" class="modal"></div>
 
-  <!-- Supabase SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-  <!-- Report generation -->
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3/dist/jspdf.plugin.autotable.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- All third-party libs self-hosted under /vendor (Tier 0.6, 2026-07-03).
+       Before: 5 CDN <script> tags meant a jsDelivr outage or flaky wifi
+       bricked the whole register. Pinned versions live in the repo now;
+       upgrade = re-download into /vendor. -->
+  <script src="/vendor/supabase.min.js?v=50"></script>
+  <script src="/vendor/chart.umd.min.js?v=50"></script>
+  <script src="/vendor/jspdf.umd.min.js?v=50"></script>
+  <script src="/vendor/jspdf.plugin.autotable.min.js?v=50"></script>
+  <script src="/vendor/xlsx.full.min.js?v=50"></script>
 
-  <script src="js/supabase-config.js?v=49"></script>
-  <script src="js/store.js?v=49"></script>
-  <script src="js/auth.js?v=49"></script>
-  <script src="js/dashboard.js?v=49"></script>
-  <script src="js/history.js?v=49"></script>
-  <script src="js/members.js?v=49"></script>
-  <script src="js/settings.js?v=49"></script>
-  <script src="js/pos.js?v=49"></script>
-  <script src="js/menu.js?v=49"></script>
-  <script src="js/orders.js?v=49"></script>
-  <script src="js/admin.js?v=49"></script>
-  <script src="js/app.js?v=49"></script>
+  <script src="js/supabase-config.js?v=50"></script>
+  <script src="js/store.js?v=50"></script>
+  <script src="js/auth.js?v=50"></script>
+  <script src="js/dashboard.js?v=50"></script>
+  <script src="js/history.js?v=50"></script>
+  <script src="js/members.js?v=50"></script>
+  <script src="js/settings.js?v=50"></script>
+  <script src="js/pos.js?v=50"></script>
+  <script src="js/menu.js?v=50"></script>
+  <script src="js/orders.js?v=50"></script>
+  <script src="js/admin.js?v=50"></script>
+  <script src="js/app.js?v=50"></script>
 
   <script>
     // We removed the service worker due to stale-cache issues. For users

@@ -17,12 +17,16 @@ GC.POS = (function () {
   // Wave B (Migration 008): takeaway flag + ad-hoc extra charges
   let takeaway = false;
   let extraCharges = [];     // [{ label, amount }]
-  const TAKEAWAY_FEE = 0.20; // SG per-order box fee
+  // Tier 0.9: fee lives in settings (Migration 012) — change it in 设置, no deploy.
+  function takeawayFee() {
+    const s = GC.Store.getSettings();
+    return s && s.takeawayCharge != null ? Number(s.takeawayCharge) : 0.20;
+  }
 
   function tierIcon(t) { return ({ platinum: '💎', silver: '🥈', regular: '👤' })[t] || '👤'; }
   function tierLabel(t) { return ({ platinum: 'Platinum', silver: 'Silver', regular: 'Regular' })[t] || ''; }
 
-  function takeawayAmount() { return takeaway ? TAKEAWAY_FEE : 0; }
+  function takeawayAmount() { return takeaway ? takeawayFee() : 0; }
   function extrasAmount() {
     return Math.round(extraCharges.reduce((s, e) => s + Number(e.amount || 0), 0) * 100) / 100;
   }
@@ -92,13 +96,124 @@ GC.POS = (function () {
     render();
   }
 
+  /* ---- Cart persistence + hold/recall (Tier 0.8, 2026-06-23) ----
+     An accidental refresh (or iPad tab reload) used to wipe a half-built
+     order. The cart now snapshots to localStorage on every render and
+     restores on the next POS load. "挂单" parks the current order so a
+     second customer can be rung up first; "取单" brings it back.
+     All user-sourced strings rendered via GC.esc (XSS-safe, house pattern). */
+  const CART_LS_KEY = 'yxd_pos_cart_v1';
+  const HELD_LS_KEY = 'yxd_pos_held_v1';
+
+  function snapshotState() {
+    return { cart, selectedMemberId, guestName, discount, takeaway, extraCharges };
+  }
+  function applyState(s) {
+    cart = Array.isArray(s.cart) ? s.cart : [];
+    selectedMemberId = s.selectedMemberId || null;
+    guestName = s.guestName || '';
+    discount = s.discount || null;
+    takeaway = !!s.takeaway;
+    extraCharges = Array.isArray(s.extraCharges) ? s.extraCharges : [];
+  }
+  function persistCart() {
+    try {
+      if (cart.length === 0 && !selectedMemberId && !guestName) {
+        localStorage.removeItem(CART_LS_KEY);
+      } else {
+        localStorage.setItem(CART_LS_KEY, JSON.stringify(snapshotState()));
+      }
+    } catch (_) {}
+  }
+  let _cartRestored = false;
+  function restoreCartOnce() {
+    if (_cartRestored) return;
+    _cartRestored = true;
+    try {
+      const raw = localStorage.getItem(CART_LS_KEY);
+      if (raw) applyState(JSON.parse(raw));
+    } catch (_) {}
+  }
+  function heldOrders() {
+    try { return JSON.parse(localStorage.getItem(HELD_LS_KEY) || '[]'); }
+    catch (_) { return []; }
+  }
+  function saveHeld(list) {
+    try { localStorage.setItem(HELD_LS_KEY, JSON.stringify(list)); } catch (_) {}
+  }
+  function holdCurrent() {
+    if (cart.length === 0) return;
+    const member = selectedMemberId ? GC.Store.getMember(selectedMemberId) : null;
+    const label = guestName || (member ? member.name : '') || `单 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+    const list = heldOrders();
+    list.push({ id: Date.now(), label, at: Date.now(), items: cartCount(), state: snapshotState() });
+    saveHeld(list);
+    cart = []; selectedMemberId = null; guestName = ''; discount = null; takeaway = false; extraCharges = [];
+    GC.toast(`已挂单 / Held: ${label}`, 'info');
+    render();
+  }
+  function showRecallModal() {
+    const list = heldOrders();
+    if (list.length === 0) return;
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3><i class="ti ti-inbox"></i> 挂单列表 / Held Orders</h3>
+            <button class="modal-close" id="hr-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="held-list">
+              ${list.map(h => `
+                <div class="held-row">
+                  <div class="held-info">
+                    <div class="held-label">${GC.esc(h.label)}</div>
+                    <small>${Number(h.items) || 0} 件 · ${new Date(h.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</small>
+                  </div>
+                  <button class="btn btn-primary btn-sm" data-recall="${Number(h.id)}">取单 / Recall</button>
+                  <button class="btn btn-secondary btn-sm" data-drop="${Number(h.id)}">✕</button>
+                </div>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    modal.classList.add('show');
+    const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
+    document.getElementById('hr-close').onclick = close;
+    modal.querySelectorAll('[data-recall]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = Number(b.dataset.recall);
+        const all = heldOrders();
+        const found = all.find(h => h.id === id);
+        if (!found) return;
+        if (cart.length > 0) { GC.toast('当前购物车还有商品，请先挂单或清空', 'error'); return; }
+        applyState(found.state);
+        saveHeld(all.filter(h => h.id !== id));
+        close();
+        render();
+      });
+    });
+    modal.querySelectorAll('[data-drop]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const ok = await GC.confirm('删除这张挂单？/ Drop this held order?', { danger: true, confirmText: '删除 / Drop' });
+        if (!ok) return;
+        saveHeld(heldOrders().filter(h => h.id !== Number(b.dataset.drop)));
+        close();
+        render();
+      });
+    });
+  }
+
   /* ---- Render ---- */
   function render() {
+    restoreCartOnce();
     const cats = GC.Store.getMenuCategories();
     if (!activeCategoryId && cats.length > 0) activeCategoryId = cats[0].id;
 
     const settings = GC.Store.getSettings();
     const sym = settings.currencySymbol;
+    persistCart();
 
     document.getElementById('main-content').innerHTML = `
       <div class="pos-view">
@@ -189,6 +304,7 @@ GC.POS = (function () {
             <div class="pos-ci-info">
               <div class="pos-ci-name">${GC.esc(c.name)}</div>
               <div class="pos-ci-meta">#${c.menuNo} · ${sym}${c.unitPrice.toFixed(2)}</div>
+              ${c.note ? `<div class="pos-ci-note"><i class="ti ti-message-2" aria-hidden="true"></i> ${GC.esc(c.note)}</div>` : ''}
             </div>
             <div class="pos-ci-qty">
               <button class="pos-qty-btn" data-dec="${c.menuItemId}">−</button>
@@ -196,6 +312,7 @@ GC.POS = (function () {
               <button class="pos-qty-btn" data-inc="${c.menuItemId}">+</button>
             </div>
             <div class="pos-ci-price">${sym}${(c.unitPrice * c.quantity).toFixed(2)}</div>
+            <button class="pos-ci-note-btn ${c.note ? 'has-note' : ''}" data-note="${c.menuItemId}" title="备注 (少糖/加料...)"><i class="ti ti-message-2"></i></button>
             <button class="pos-ci-remove" data-rm="${c.menuItemId}" title="删除">×</button>
           </div>`).join('');
 
@@ -231,7 +348,11 @@ GC.POS = (function () {
         <div class="pos-cart-top">
           <div class="pos-cart-title-row">
             <div class="pos-cart-title">订单 · Order</div>
-            <button class="pos-cart-clear" id="pos-cart-clear" ${cart.length === 0 ? 'disabled' : ''}>清空</button>
+            <div class="pos-cart-actions">
+              ${heldOrders().length > 0 ? `<button class="pos-cart-hold-btn" id="pos-recall" title="取回挂单"><i class="ti ti-inbox"></i> 取单 (${heldOrders().length})</button>` : ''}
+              <button class="pos-cart-hold-btn" id="pos-hold" ${cart.length === 0 ? 'disabled' : ''} title="挂起当前订单"><i class="ti ti-player-pause"></i> 挂单</button>
+              <button class="pos-cart-clear" id="pos-cart-clear" ${cart.length === 0 ? 'disabled' : ''}>清空</button>
+            </div>
           </div>
           ${customerBlock}
         </div>
@@ -251,7 +372,7 @@ GC.POS = (function () {
                 <span>🥡 外带打包 / Takeaway</span>
               </label>
             </span>
-            <span class="${takeaway ? '' : 'pos-muted'}">+ ${sym}${TAKEAWAY_FEE.toFixed(2)}</span>
+            <span class="${takeaway ? '' : 'pos-muted'}">+ ${sym}${takeawayFee().toFixed(2)}</span>
           </div>
 
           ${extraCharges.length > 0 ? extraCharges.map((e, i) => `
@@ -339,6 +460,28 @@ GC.POS = (function () {
       if (cart.length === 0) return;
       const ok = await GC.confirm('清空购物车？\nClear cart?', { danger: true, confirmText: '清空 / Clear' });
       if (ok) clearCart();
+    });
+
+    // Hold / recall (Tier 0.8)
+    const holdBtn = document.getElementById('pos-hold');
+    if (holdBtn) holdBtn.addEventListener('click', holdCurrent);
+    const recallBtn = document.getElementById('pos-recall');
+    if (recallBtn) recallBtn.addEventListener('click', showRecallModal);
+
+    // Per-item note (Tier 0.4 — 少糖/加料/去冰; prints on receipt + kitchen)
+    document.querySelectorAll('[data-note]').forEach(b => {
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = cart.find(c => c.menuItemId === b.dataset.note);
+        if (!item) return;
+        const v = await GC.prompt(
+          `${item.name} — 备注 / Note\n例：少糖 / 去冰 / 加芋圆`,
+          { title: '📝 商品备注 / Item note', defaultValue: item.note || '' }
+        );
+        if (v === null) return;               // cancelled
+        item.note = v.trim() || undefined;    // empty clears the note
+        render();
+      });
     });
 
     // Discount
@@ -659,6 +802,15 @@ GC.POS = (function () {
       let reason = reasonLabels[reasonKey] || '';
       if (reasonKey === 'other') {
         reason = (document.getElementById('disc-note').value || '').trim() || 'other';
+      }
+      // Tier 0.5: large discounts (>20% or >$10) need manager PIN.
+      // Small courtesy discounts stay frictionless for the counter.
+      // (The PIN modal reuses #modal, so a cancelled PIN also dismisses this
+      // discount modal — cashier re-opens 加折扣 to retry.)
+      const isLarge = mode === 'percent' ? v > 20 : v > 10;
+      if (isLarge && !(await GC.requireManagerPin(`大额折扣 (${mode === 'percent' ? v + '%' : sym + v})`))) {
+        GC.toast('未授权，折扣未应用 / Not authorized', 'error');
+        return;
       }
       discount = { type: mode, value: v, reason };
       close();
@@ -1395,7 +1547,8 @@ GC.POS = (function () {
           <span class="rcpt-qty">× ${i.quantity}</span>
         </div>
         <div class="rcpt-amt">${sym}${i.subtotal.toFixed(2)}</div>
-      </div>`).join('');
+      </div>
+      ${i.note ? `<div class="rcpt-item-note">↳ ${GC.esc(i.note)}</div>` : ''}`).join('');
 
     const modal = document.getElementById('modal');
     modal.innerHTML = `
@@ -1447,5 +1600,6 @@ GC.POS = (function () {
 
   function destroy() {}
 
-  return { render, destroy };
+  // showReceipt exported for reprint from the Orders page (Tier 0.7)
+  return { render, destroy, showReceipt };
 })();

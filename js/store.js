@@ -62,6 +62,12 @@ GC.Store = (function () {
       currency: row.currency,
       currencySymbol: row.currency_symbol,
       minBillingMinutes: Number(row.min_billing_minutes),
+      // Migration 012 (Tier 0.5 + 0.9): configurable instead of hardcoded
+      managerPin: row.manager_pin || null,   // sha256 hex; null = PIN gate disabled
+      takeawayCharge: row.takeaway_charge != null ? Number(row.takeaway_charge) : 0.20,
+      staffNames: Array.isArray(row.staff_names) && row.staff_names.length > 0
+        ? row.staff_names
+        : ['Qian Min', 'Tock Chau', 'Ke Ying', 'Felicia', 'Ernest'],
     };
   }
 
@@ -239,6 +245,7 @@ GC.Store = (function () {
       tendered: row.tendered != null ? Number(row.tendered) : null,
       changeGiven: row.change_given != null ? Number(row.change_given) : null,
       note: row.note,
+      branchId: row.branch_id || null,   // Migration 012
       createdAt: new Date(row.created_at).getTime(),
     };
   }
@@ -683,6 +690,29 @@ GC.Store = (function () {
   }
 
   function now() { return Date.now() + _clockOffset; }
+
+  /* ========== Business day (Tier 0.1, 2026-06-23) ==========
+     The shop trades 12:00 → 01:00 next day. A sale at 00:30 belongs to the
+     PREVIOUS business date. Business day cutoff = 06:00 SGT (industry
+     standard "4-6am day start"), which also keeps any pre-noon activity
+     (early opening, testing) on the same calendar date.
+     These helpers are device-timezone independent: epoch + fixed offsets
+     rendered via toISOString (always UTC). */
+  const BUSINESS_DAY_START_HOUR = 6; // SGT
+
+  /** Business date (YYYY-MM-DD, SGT) for a given epoch-ms (default: now). */
+  function getBusinessDate(ts) {
+    const t = ts != null ? ts : now();
+    // +8h shifts UTC→SGT clock; −cutoff makes 00:00–05:59 land on prev date.
+    return new Date(t + (8 - BUSINESS_DAY_START_HOUR) * 3600000).toISOString().slice(0, 10);
+  }
+
+  /** Epoch-ms window [start, end) covering one business date. */
+  function businessDayWindow(yyyymmdd) {
+    const start = new Date(yyyymmdd + 'T00:00:00+08:00').getTime()
+      + BUSINESS_DAY_START_HOUR * 3600000;
+    return { start, end: start + 86400000 };
+  }
 
   /* ========== Sync Reads ========== */
 
@@ -1185,8 +1215,13 @@ GC.Store = (function () {
       currency: appSettings.currency || (_cache.settings && _cache.settings.currency) || 'SGD',
       currency_symbol: appSettings.currencySymbol,
       min_billing_minutes: appSettings.minBillingMinutes,
+      // Migration 012 (Tier 0.5 + 0.9)
+      manager_pin: appSettings.managerPin || null,
+      takeaway_charge: appSettings.takeawayCharge != null ? appSettings.takeawayCharge : 0.20,
+      staff_names: Array.isArray(appSettings.staffNames) ? appSettings.staffNames : undefined,
       updated_at: new Date().toISOString(),
     };
+    if (row.staff_names === undefined) delete row.staff_names;
     await sb.from('settings').update(row).eq('id', 1);
     _cache.settings = appSettings;
 
@@ -1581,20 +1616,28 @@ GC.Store = (function () {
    *           orderCount, sessionCount, voidedCount, byPayment[] }
    */
   function getDailySummary(yyyymmdd, opts = {}) {
-    // Singapore timezone is UTC+8 — pin window explicitly so a cashier on a
-    // device with a different OS timezone (or near midnight UTC drift) still
-    // gets the right Singapore business-day boundaries. (Finance P0-B 2026-05-14)
-    // Migration 009: scope by branch. opts.branchId='all' aggregates everything
-    // (used by /admin cross-branch view). Default = current branch.
-    const day = yyyymmdd || (() => {
-      const now = new Date();
-      const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
-      return sgt.toISOString().slice(0, 10);
-    })();
-    const start = new Date(day + 'T00:00:00+08:00').getTime();
-    const end = start + 86400000;
+    // TENDER-BASED accounting over the BUSINESS DAY (Tier 0.1 + 0.2, 2026-06-23).
+    //
+    // Window: business day (06:00 SGT → next 06:00 SGT) so the 00:00–01:00
+    // closing-hour sales land on the trading date the cashier expects,
+    // matching the Orders-page 12:00–01:00 mental model.
+    //
+    // Counting: payment rows are counted by their OWN created_at, regardless
+    // of order status. Originals are positive (money entered the drawer —
+    // true even if the order is later voided); void-refund rows are negative
+    // (money left the drawer). Same-day void nets to zero; a void of
+    // YESTERDAY's order correctly reduces TODAY's expected cash. This is how
+    // commercial POS (Square/Toast) reconcile drawers.
+    //
+    // Migration 009: scope by branch; opts.branchId='all' aggregates all.
+    const day = yyyymmdd || getBusinessDate();
+    const { start, end } = businessDayWindow(day);
     const scopeBranchId = opts.branchId !== undefined ? opts.branchId : _currentBranchId;
     const matchBranch = (row) => scopeBranchId === 'all' || row.branchId === scopeBranchId;
+
+    // Order lookup for payment rows predating the branch_id backfill.
+    const orderById = new Map(_cache.orders.map(o => [o.id, o]));
+    const payBranch = (p) => p.branchId || (orderById.get(p.orderId) || {}).branchId;
 
     const dayOrders = _cache.orders.filter(o =>
       o.status === 'completed' &&
@@ -1602,13 +1645,22 @@ GC.Store = (function () {
       (o.completedAt || o.createdAt) < end &&
       matchBranch(o)
     );
-    const orderIds = new Set(dayOrders.map(o => o.id));
-    const dayPayments = _cache.orderPayments.filter(p => orderIds.has(p.orderId));
 
+    // ALL tender rows in the window (positive originals + negative refunds).
+    const dayPayments = _cache.orderPayments.filter(p =>
+      p.createdAt >= start && p.createdAt < end &&
+      (scopeBranchId === 'all' || payBranch(p) === scopeBranchId)
+    );
+
+    // Sessions contribute revenue when they END (money taken at close).
+    // Voided sessions stay counted here — their negative refund row (written
+    // by voidSession) subtracts on the refund date. Same-day void nets zero.
     const daySessions = _cache.sessions.filter(s =>
-      s.status === 'completed' && s.endTime && s.endTime >= start && s.endTime < end &&
+      (s.status === 'completed' || s.status === 'voided') &&
+      s.endTime && s.endTime >= start && s.endTime < end &&
       matchBranch(s)
     );
+    const completedSessions = daySessions.filter(s => s.status === 'completed');
 
     const dayTopUps = _cache.topUps.filter(t =>
       t.createdAt >= start && t.createdAt < end && matchBranch(t)
@@ -1621,10 +1673,12 @@ GC.Store = (function () {
       matchBranch(o)
     );
 
-    // Aggregate by payment method (orders + sessions both contribute)
+    // Aggregate by payment method (tender rows + session closes)
     const byMethod = { cash: 0, paynow: 0, member_balance: 0, card: 0, grab: 0, foodpanda: 0 };
+    let refundsTotal = 0;
     dayPayments.forEach(p => {
       byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
+      if (Number(p.amount) < 0) refundsTotal += -Number(p.amount);
     });
     // Sessions also contribute revenue. payment_method column on sessions
     // tells us which bucket (walk-in defaults to 'cash' if column blank).
@@ -1648,8 +1702,9 @@ GC.Store = (function () {
     return {
       day,
       orderCount: dayOrders.length,
-      sessionCount: daySessions.length,
+      sessionCount: completedSessions.length,
       voidedCount: voided.length,
+      refundsTotal: round2(refundsTotal),
       totalRevenue: round2(Object.values(byMethod).reduce((s, v) => s + v, 0)),
       cash: round2(byMethod.cash),
       paynow: round2(byMethod.paynow),
@@ -1685,11 +1740,9 @@ GC.Store = (function () {
    *     hourly: [{ label: 'D 18:00', revenue }], breakdown: {food, gaming} }
    */
   function getRangeSummary(opts = {}) {
-    const today = (() => {
-      const now = new Date();
-      const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
-      return sgt.toISOString().slice(0, 10);
-    })();
+    // Default to the current BUSINESS date (06:00 SGT cutoff) — the old
+    // inline helper returned the UTC date on SGT devices between 00:00-08:00.
+    const today = getBusinessDate();
     const startDate = opts.startDate || today;
     const endDate = opts.endDate || startDate;
     const startHour = opts.startHour != null ? opts.startHour : 12;
@@ -1808,8 +1861,13 @@ GC.Store = (function () {
 
     const summary = getDailySummary(yyyymmdd);
     const actor = await getCurrentUserEmail();
-    // Cash drawer holds order/session cash AND top-up cash collected.
-    const expectedCash = round2(summary.cash + summary.topUpsCash);
+    // Tier 0.3: drawer starts the day with the branch's opening float —
+    // count it in expected cash and persist which float was assumed.
+    const branch = getBranch(branchId);
+    const openingFloat = round2(Number((branch && branch.openingFloat) || 0));
+    // Drawer = opening float + order/session cash + top-up cash (refund rows
+    // are already netted inside summary.cash by the tender-based summary).
+    const expectedCash = round2(openingFloat + summary.cash + summary.topUpsCash);
     const row = {
       close_date: yyyymmdd,
       closed_by: actor,
@@ -1821,6 +1879,7 @@ GC.Store = (function () {
       total_discount: summary.totalDiscount,
       topups_received: summary.topUpsCash,
       voided_orders: summary.voidedCount,
+      opening_float: openingFloat,   // Tier 0.3 — column existed since 007, never written
       note: note || null,
       snapshot: summary,
       branch_id: branchId,   // Migration 009
@@ -1875,7 +1934,8 @@ GC.Store = (function () {
     const actor = await getCurrentUserEmail();
     const note = opts.note || null;
     const staff = opts.staff || null;  // staff name picked from dropdown
-    const tenders = _cache.orderPayments.filter(p => p.orderId === orderId);
+    // Only positive originals — refund rows themselves must never be re-refunded.
+    const tenders = _cache.orderPayments.filter(p => p.orderId === orderId && Number(p.amount) > 0);
 
     // 1) Refund member-balance portions FIRST (atomic via RPC).
     //    Works for both single-method member orders AND mixed orders.
@@ -1905,6 +1965,27 @@ GC.Store = (function () {
     await sb.from('orders').update({ status: 'voided' }).eq('id', orderId);
     const idx = _cache.orders.findIndex(o => o.id === orderId);
     if (idx >= 0) _cache.orders[idx].status = 'voided';
+
+    // 2b) Write the negative refund tender rows (Tier 0.2 — this was
+    // documented above for months but never implemented; the competitive
+    // audit caught the doc/code mismatch). Dated NOW, so voiding
+    // yesterday's order reduces TODAY's expected drawer cash.
+    if (tenders.length > 0) {
+      const refundRows = tenders.map(t => ({
+        order_id: orderId,
+        method: t.method,
+        amount: -round2(Number(t.amount)),
+        note: `refund:void${staff ? ':' + staff : ''}`,
+        branch_id: order.branchId || _currentBranchId,
+      }));
+      const { data: refundData, error: refundErr } = await sb
+        .from('order_payments').insert(refundRows).select();
+      if (refundErr) {
+        console.error('void refund rows failed:', refundErr);
+      } else if (refundData) {
+        _cache.orderPayments.push(...refundData.map(orderPaymentToApp));
+      }
+    }
 
     // 3) Audit with actor + per-tender breakdown + staff who clicked void.
     await sb.from('audit_log').insert({
@@ -1962,6 +2043,24 @@ GC.Store = (function () {
     if (error) throw error;
     const idx = _cache.sessions.findIndex(s => s.id === sessionId);
     if (idx >= 0) _cache.sessions[idx].status = 'voided';
+
+    // 2b) Negative refund tender row (Tier 0.2). Sessions have no original
+    // order_payments row — getDailySummary counts voided sessions' totals by
+    // their endTime, and this refund row (dated NOW, order_id NULL) subtracts
+    // on the refund date. Same-day void nets zero; cross-day void reduces
+    // today's expected drawer cash.
+    if (Number(session.total) > 0) {
+      const method = session.memberId ? 'member_balance' : (session.paymentMethod || 'cash');
+      const { data: refundData, error: refundErr } = await sb.from('order_payments').insert({
+        order_id: null,
+        method,
+        amount: -round2(Number(session.total)),
+        note: `refund:session_void:${sessionId}${staff ? ':' + staff : ''}`,
+        branch_id: session.branchId || _currentBranchId,
+      }).select();
+      if (refundErr) console.error('session void refund row failed:', refundErr);
+      else if (refundData) _cache.orderPayments.push(...refundData.map(orderPaymentToApp));
+    }
 
     // 3) Audit.
     await sb.from('audit_log').insert({
@@ -2063,5 +2162,7 @@ GC.Store = (function () {
     getEffectiveMenuPrice, isMenuItemAvailable, getBranchMenuPricing,
     // Realtime diagnostics (Ernest 2026-05-14)
     getRealtimeStatus, pollDashboardData,
+    // Business day (Tier 0.1, 2026-06-23)
+    getBusinessDate,
   };
 })();

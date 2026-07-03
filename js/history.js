@@ -328,8 +328,10 @@ GC.History = (function () {
       });
     }
 
-    // Z-Report data — today's takings across F&B + gaming + top-ups, by tender
-    const today = localDateStr(new Date());
+    // Z-Report data — today's takings across F&B + gaming + top-ups, by tender.
+    // BUSINESS date (06:00 SGT cutoff): at 00:30 the Z-Report still shows the
+    // trading day the cashier is about to close, not the calendar's new day.
+    const today = GC.Store.getBusinessDate();
     const z = GC.Store.getDailySummary(today);
     const closeRecord = (GC.Store.getDailyCloses() || []).find(c => c.closeDate === today);
     const isClosed = !!closeRecord;
@@ -632,9 +634,14 @@ GC.History = (function () {
   /* ---- Z-Report: Close Day modal ---- */
   async function showCloseDayModal() {
     const sym = GC.Store.getSettings().currencySymbol;
-    const today = localDateStr(new Date());
+    // BUSINESS date — closing at 00:30 closes the trading day that started
+    // yesterday noon, not the new calendar date.
+    const today = GC.Store.getBusinessDate();
     const z = GC.Store.getDailySummary(today);
     const existing = (GC.Store.getDailyCloses() || []).find(c => c.closeDate === today);
+    // Tier 0.3: branch opening float is part of the expected drawer count.
+    const curBranch = GC.Store.getCurrentBranch ? GC.Store.getCurrentBranch() : null;
+    const openingFloat = Number((curBranch && curBranch.openingFloat) || 0);
 
     const modal = document.getElementById('modal');
     modal.innerHTML = `
@@ -696,13 +703,13 @@ GC.History = (function () {
                 <div class="rate-input-group" style="max-width:240px">
                   <span class="rate-prefix">${sym}</span>
                   <input type="number" id="z-actual-cash" class="form-input settings-input"
-                    step="0.10" placeholder="${(z.cash + z.topUpsCash).toFixed(2)}"
+                    step="0.10" placeholder="${(openingFloat + z.cash + z.topUpsCash).toFixed(2)}"
                     style="font-size:1.3rem;font-weight:700;width:140px;text-align:right">
                 </div>
                 <div class="form-hint" style="line-height:1.5">
-                  <strong>预期现金</strong> ${sym}${(z.cash + z.topUpsCash).toFixed(2)}<br>
+                  <strong>预期现金</strong> ${sym}${(openingFloat + z.cash + z.topUpsCash).toFixed(2)}<br>
                   <small style="color:var(--text-muted)">
-                    包括：订单/台 ${sym}${z.cash.toFixed(2)}${z.topUpsCash > 0 ? ` ＋ 充值 ${sym}${z.topUpsCash.toFixed(2)}` : ''}
+                    包括：${openingFloat > 0 ? `备用金 ${sym}${openingFloat.toFixed(2)} ＋ ` : ''}订单/台 ${sym}${z.cash.toFixed(2)}${z.topUpsCash > 0 ? ` ＋ 充值 ${sym}${z.topUpsCash.toFixed(2)}` : ''}${z.refundsTotal > 0 ? ` － 退款 ${sym}已计入` : ''}
                   </small><br>
                   <small style="color:var(--text-muted)">差额会自动记录到日结</small>
                 </div>

@@ -13,7 +13,9 @@ GC.Orders = (function () {
   function localDateStr(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
-  const TODAY = localDateStr(new Date());
+  // Business date (06:00 SGT cutoff): at 00:30 the default filter still shows
+  // the trading day in progress, not an empty "new" calendar day.
+  const TODAY = GC.Store.getBusinessDate();
 
   // Filter state — shop hours 12:00 → next-day 01:00 (hours 12-25)
   let filterStartDate = TODAY;
@@ -332,9 +334,14 @@ GC.Orders = (function () {
     });
   }
 
-  // Hardcoded staff list — pick whoever is physically doing the void.
-  // Ernest 2026-05-14. Update here if the team changes.
-  const STAFF_LIST = ['Qian Min', 'Tock Chau', 'Ke Ying', 'Felicia', 'Ernest'];
+  // Staff list now lives in settings.staff_names (Migration 012 / Tier 0.9)
+  // — editable in 设置 without a deploy. Falls back to the launch roster.
+  function staffList() {
+    const s = GC.Store.getSettings();
+    return (s && Array.isArray(s.staffNames) && s.staffNames.length > 0)
+      ? s.staffNames
+      : ['Qian Min', 'Tock Chau', 'Ke Ying', 'Felicia', 'Ernest'];
+  }
 
   /**
    * Shared void modal. Used by both order void and session void.
@@ -350,7 +357,7 @@ GC.Orders = (function () {
     return new Promise(resolve => {
       const modal = document.getElementById('modal');
       const staffOpts = ['<option value="">— 请选择 / Select —</option>']
-        .concat(STAFF_LIST.map(s => `<option value="${GC.esc(s)}">${GC.esc(s)}</option>`))
+        .concat(staffList().map(s => `<option value="${GC.esc(s)}">${GC.esc(s)}</option>`))
         .join('');
       modal.innerHTML = `
         <div class="modal-overlay">
@@ -407,6 +414,8 @@ GC.Orders = (function () {
     const order = GC.Store.getOrder(orderId);
     if (!order) return;
     if (order.status === 'voided') return;
+    // Tier 0.5: manager PIN gate (no-op until a PIN is set in 设置)
+    if (!(await GC.requireManagerPin('作废订单 / Void order'))) return;
     const sym = GC.Store.getSettings().currencySymbol;
     const tenders = GC.Store.getOrderPaymentsFor ? GC.Store.getOrderPaymentsFor(orderId) : [];
     const hasMember = order.paymentMethod === 'member_balance'
@@ -442,6 +451,8 @@ GC.Orders = (function () {
       GC.toast('正在进行中的台不可作废，请先结账', 'error');
       return;
     }
+    // Tier 0.5: manager PIN gate (no-op until a PIN is set in 设置)
+    if (!(await GC.requireManagerPin('作废游戏台 / Void session'))) return;
     const sym = GC.Store.getSettings().currencySymbol;
     const isMember = !!session.memberId && session.paymentMethod === 'member_balance';
 
@@ -533,6 +544,7 @@ GC.Orders = (function () {
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" id="m-close-btn">关闭</button>
+            <button class="btn btn-secondary btn-sm" id="m-reprint"><i class="ti ti-printer"></i> 重打收据 / Reprint</button>
             ${order.status === 'completed' ? `<button class="btn btn-sm" style="background:var(--bg-input);color:var(--red);border:1px solid var(--border)" id="m-void">作废订单</button>` : ''}
           </div>
         </div>
@@ -542,6 +554,15 @@ GC.Orders = (function () {
     const close = () => { modal.classList.remove('show'); modal.innerHTML = ''; };
     document.getElementById('m-close').onclick = close;
     document.getElementById('m-close-btn').onclick = close;
+    // Tier 0.7: reprint — reuse the POS receipt renderer (order + items are
+    // already in the cache; the receipt modal replaces this detail modal;
+    // markup unchanged, only a click handler added here).
+    const reprintBtn = document.getElementById('m-reprint');
+    if (reprintBtn) {
+      reprintBtn.onclick = () => {
+        if (GC.POS && GC.POS.showReceipt) GC.POS.showReceipt(order, items);
+      };
+    }
     const voidBtn = document.getElementById('m-void');
     if (voidBtn) {
       voidBtn.onclick = () => confirmAndVoidOrder(orderId);

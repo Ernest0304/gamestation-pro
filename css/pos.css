@@ -1243,6 +1243,23 @@ body.pos-mode .np-btn:hover { background: #fef3e2; }
 .rcpt-name { flex: 1; }
 .rcpt-qty { color: #92775a; margin-left: 8px; font-size: 0.78rem; }
 .rcpt-item-note { font-size: 0.74rem; color: #92775a; padding-left: 14px; margin: -2px 0 4px; }
+/* Void stamp + reprint tag (Ops audit 2026-07-03: voided orders must not
+   print as clean receipts; reprints must be distinguishable from originals) */
+.rcpt-void-stamp {
+  border: 3px double #b91c1c;
+  color: #b91c1c;
+  text-align: center;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: 0.15em;
+  padding: 6px 8px; margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.rcpt-reprint-tag {
+  border: 1px dashed #92775a;
+  color: #6b5840;
+  text-align: center;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+  padding: 3px 6px; margin-bottom: 10px;
+}
 .rcpt-amt { font-weight: 700; }
 .rcpt-footer { text-align: center; margin-top: 14px; color: #92775a; font-size: 0.85rem; font-family: var(--font); }
 

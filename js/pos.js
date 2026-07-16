@@ -1517,7 +1517,7 @@ GC.POS = (function () {
   }
 
   /* ---- Receipt modal ---- */
-  function showReceipt(order, items) {
+  function showReceipt(order, items, opts) {
     const sym = GC.Store.getSettings().currencySymbol;
     const fmtTime = ts => new Date(ts).toLocaleString('zh-CN', { hour12: false });
     const member = order.memberId ? GC.Store.getMember(order.memberId) : null;
@@ -1550,11 +1550,19 @@ GC.POS = (function () {
       </div>
       ${i.note ? `<div class="rcpt-item-note">↳ ${GC.esc(i.note)}</div>` : ''}`).join('');
 
+    // Ops audit 2026-07-03: voided orders must never print as clean receipts
+    // (fraud path: pay → receipt → void → drawer balances → pristine reprint
+    // "proves" payment). Reprints are also stamped so the original stays the
+    // only clean copy.
+    const isVoided = order.status === 'voided';
+    const isReprint = !!(opts && opts.reprint);
     const modal = document.getElementById('modal');
     modal.innerHTML = `
       <div class="modal-overlay">
         <div class="modal-content pos-receipt-modal">
           <div class="receipt">
+            ${isVoided ? '<div class="rcpt-void-stamp">✕ 已作废 / VOIDED ✕</div>' : ''}
+            ${isReprint && !isVoided ? `<div class="rcpt-reprint-tag">补印 / REPRINT · ${new Date().toLocaleString('zh-CN', { hour12: false })}</div>` : ''}
             <div class="rcpt-header">
               <div class="rcpt-brand">郁香潭 · Yuu Xiang Dam</div>
               <div class="rcpt-meta">订单号 Order #${order.orderNo}</div>

@@ -560,7 +560,7 @@ GC.Orders = (function () {
     const reprintBtn = document.getElementById('m-reprint');
     if (reprintBtn) {
       reprintBtn.onclick = () => {
-        if (GC.POS && GC.POS.showReceipt) GC.POS.showReceipt(order, items);
+        if (GC.POS && GC.POS.showReceipt) GC.POS.showReceipt(order, items, { reprint: true });
       };
     }
     const voidBtn = document.getElementById('m-void');

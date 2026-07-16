@@ -642,6 +642,11 @@ GC.History = (function () {
     // Tier 0.3: branch opening float is part of the expected drawer count.
     const curBranch = GC.Store.getCurrentBranch ? GC.Store.getCurrentBranch() : null;
     const openingFloat = Number((curBranch && curBranch.openingFloat) || 0);
+    // Ops audit 2026-07-03: warn if THIS device still has held (挂单) orders —
+    // they live only in localStorage and would silently miss today's takings.
+    // (heldCount is a Number — nothing user-typed reaches this template.)
+    let heldCount = 0;
+    try { heldCount = (JSON.parse(localStorage.getItem('yxd_pos_held_v1') || '[]')).length; } catch (_) {}
 
     const modal = document.getElementById('modal');
     modal.innerHTML = `
@@ -652,6 +657,11 @@ GC.History = (function () {
             <button class="modal-close" id="m-close">&times;</button>
           </div>
           <div class="modal-body">
+            ${heldCount > 0 && !existing ? `
+              <div class="close-held-warn">
+                <i class="ti ti-alert-triangle" aria-hidden="true"></i>
+                本机还有 ${heldCount} 张挂单未结账 — 挂单不计入今日营收。请先去「点单」取单结账或删除，再日结。
+              </div>` : ''}
             <div class="z-report-grid" style="margin-bottom:18px">
               <div class="z-stat cash">
                 <span class="z-stat-label">💵 现金 / Cash 预期</span>

@@ -147,6 +147,18 @@ body.pos-mode .nav-brand-en { color: #92775a; }
   margin: 0 8px;
   transition: all 0.15s;
 }
+/* Close-day held-orders warning (Ops audit 2026-07-03) */
+.close-held-warn {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--amber);
+  border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 16px;
+  font-size: 0.85rem; font-weight: 600; line-height: 1.5;
+}
+.close-held-warn i { font-size: 1.1rem; flex-shrink: 0; }
+
 /* ===== Offline guard (Tier 0.6) ===== */
 .offline-banner {
   position: fixed; top: 0; left: 0; right: 0; z-index: 400;

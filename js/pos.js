@@ -803,12 +803,18 @@ GC.POS = (function () {
       if (reasonKey === 'other') {
         reason = (document.getElementById('disc-note').value || '').trim() || 'other';
       }
-      // Tier 0.5: large discounts (>20% or >$10) need manager PIN.
-      // Small courtesy discounts stay frictionless for the counter.
+      // Tier 0.5 + Finance audit 2026-07-03: gate on the COMPUTED dollar
+      // amount, not just the raw input — 20% of a $500 bill is $100 off and
+      // must not slip under a "$10 fixed" threshold. Large = >$10 actual
+      // discount OR >20% rate. Small courtesy discounts stay frictionless.
       // (The PIN modal reuses #modal, so a cancelled PIN also dismisses this
       // discount modal — cashier re-opens 加折扣 to retry.)
-      const isLarge = mode === 'percent' ? v > 20 : v > 10;
-      if (isLarge && !(await GC.requireManagerPin(`大额折扣 (${mode === 'percent' ? v + '%' : sym + v})`))) {
+      const sub = cartSubtotal();
+      const dAmt = mode === 'percent'
+        ? Math.round(sub * v / 100 * 100) / 100
+        : Math.min(sub, v);
+      const isLarge = dAmt > 10 || (mode === 'percent' && v > 20);
+      if (isLarge && !(await GC.requireManagerPin(`大额折扣 (${mode === 'percent' ? v + '%' : sym + v} ≈ ${sym}${dAmt.toFixed(2)})`))) {
         GC.toast('未授权，折扣未应用 / Not authorized', 'error');
         return;
       }

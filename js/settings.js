@@ -231,8 +231,10 @@ GC.Settings = (function () {
         minBillingMinutes: 0,
         // Store ops (Tier 0.5 + 0.9)
         takeawayCharge: Math.max(0, parseFloat(document.getElementById('takeaway-charge').value) || 0),
+        // UX audit 2026-07-03: owners type with Chinese IME — split on
+        // fullwidth ，and 、too, or "A，B" silently saves as ONE staff name.
         staffNames: document.getElementById('staff-names').value
-          .split(',').map(x => x.trim()).filter(Boolean),
+          .split(/[,，、]/).map(x => x.trim()).filter(Boolean),
         managerPin: s.managerPin || null,   // may be replaced below
       };
       // PIN field: blank = keep existing; a new value is hashed before save.
@@ -242,7 +244,17 @@ GC.Settings = (function () {
           GC.toast('PIN 需为 4-8 位数字 / PIN must be 4-8 digits', 'error');
           return;
         }
-        newSettings.managerPin = await GC.sha256Hex(pinRaw);
+        // Finance audit 2026-07-03: changing an EXISTING PIN requires the
+        // current PIN first — otherwise any cashier could replace it and
+        // self-approve voids/discounts.
+        if (s.managerPin) {
+          const ok = await GC.requireManagerPin('更换经理 PIN / Change manager PIN');
+          if (!ok) {
+            GC.toast('未授权 — PIN 未更改 / Not authorized', 'error');
+            return;
+          }
+        }
+        newSettings.managerPin = await GC.pinHash(pinRaw);
       }
       await GC.Store.saveSettings(newSettings);
       GC.toast('设置已保存 / Settings saved', 'success');

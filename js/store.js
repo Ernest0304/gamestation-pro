@@ -691,6 +691,17 @@ GC.Store = (function () {
 
   function now() { return Date.now() + _clockOffset; }
 
+  /* ========== Offline guard (IT audit 2026-07-03) ==========
+     The CSS pointer-events block only covers listed buttons and not
+     keyboard/console/modal-already-open paths. This assert at the top of
+     every money-writing function is the authoritative client-side gate:
+     no tender is ever "taken" while the device knows it's offline. */
+  function assertOnline() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new Error('网络已断开，无法收款/记账 — 请恢复网络后重试 / Offline — cannot record transactions');
+    }
+  }
+
   /* ========== Business day (Tier 0.1, 2026-06-23) ==========
      The shop trades 12:00 → 01:00 next day. A sale at 00:30 belongs to the
      PREVIOUS business date. Business day cutoff = 06:00 SGT (industry
@@ -804,6 +815,7 @@ GC.Store = (function () {
    * For walk-in: hours required, paid upfront. For member: balance-based.
    */
   async function openSession({ stationId, stationName, stationType, memberId, guestName, hours, paymentMethod, cashier }) {
+    assertOnline();
     const start = now();  // Use clock-synced now() not raw Date.now()
     const isWalkIn = !memberId;
     // Capture cashier identity (Finance + Ops critical). Falls back to auth user.
@@ -881,6 +893,7 @@ GC.Store = (function () {
    * already-paid blocks keep their original price (prevents undercharge/overcharge of paid time).
    */
   async function extendWalkIn(sessionId, extraHours, opts = {}) {
+    assertOnline();
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session || session.status !== 'active' || session.memberId) return null;
     const { rate: currentRate, regularRate: currentRegularRate } = getRateFor(session.stationType, null);
@@ -934,6 +947,7 @@ GC.Store = (function () {
    * - Member: compute prorated cost, deduct from balance
    */
   async function closeSession(sessionId) {
+    assertOnline();
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session || session.status !== 'active') return null;
 
@@ -1140,6 +1154,7 @@ GC.Store = (function () {
    * Returns { member, topUp, oldTier, newTier, bonus, reason }
    */
   async function applyTopUp(memberId, amount) {
+    assertOnline();
     const m = getMember(memberId);
     if (!m) throw new Error('Member not found');
     if (!amount || amount <= 0) throw new Error('Invalid amount');
@@ -1380,6 +1395,7 @@ GC.Store = (function () {
     extraCharges = [],      // [{label, amount}] — manual add-on or delivery diff
     deliveryPlatformTotal,  // when Grab/FoodPanda is the tender
   }) {
+    assertOnline();
     if (!cart || cart.length === 0) throw new Error('购物车为空 Cart is empty');
     const actor = cashier || (await getCurrentUserEmail());
 
@@ -1833,6 +1849,7 @@ GC.Store = (function () {
    *   physically holds that money (top-ups are paid in cash at counter).
    */
   async function closeDay(yyyymmdd, actualCash, note) {
+    assertOnline();
     const branchId = _currentBranchId;
     if (!branchId) throw new Error('未选择分店 / No branch selected');
 
@@ -1927,9 +1944,10 @@ GC.Store = (function () {
    *     (default behavior — matches "void = cancel, money goes back").
    */
   async function voidOrder(orderId, opts = {}) {
+    assertOnline();
     const order = getOrder(orderId);
     if (!order) throw new Error('Order not found');
-    if (order.status === 'voided') return; // idempotent
+    if (order.status === 'voided') return; // idempotent (fast local check)
 
     const actor = await getCurrentUserEmail();
     const note = opts.note || null;
@@ -1937,7 +1955,24 @@ GC.Store = (function () {
     // Only positive originals — refund rows themselves must never be re-refunded.
     const tenders = _cache.orderPayments.filter(p => p.orderId === orderId && Number(p.amount) > 0);
 
-    // 1) Refund member-balance portions FIRST (atomic via RPC).
+    // 1) CLAIM the void first — conditional update so two registers voiding
+    //    the same order can't both proceed (IT audit 2026-07-03: the old
+    //    refund-then-update order let the loser double-refund the member).
+    //    0 rows returned = someone else already voided it → abort cleanly.
+    const { data: claimed, error: claimErr } = await sb
+      .from('orders').update({ status: 'voided' })
+      .eq('id', orderId).eq('status', 'completed')
+      .select('id');
+    if (claimErr) throw claimErr;
+    if (!claimed || claimed.length === 0) {
+      const idx0 = _cache.orders.findIndex(o => o.id === orderId);
+      if (idx0 >= 0) _cache.orders[idx0].status = 'voided';
+      throw new Error('此订单已被另一台设备作废 / Already voided on another register');
+    }
+    const idx = _cache.orders.findIndex(o => o.id === orderId);
+    if (idx >= 0) _cache.orders[idx].status = 'voided';
+
+    // 2) Refund member-balance portions (atomic via RPC).
     //    Works for both single-method member orders AND mixed orders.
     let memberRefunded = 0;
     for (const t of tenders) {
@@ -1961,15 +1996,11 @@ GC.Store = (function () {
       }
     }
 
-    // 2) Mark order voided.
-    await sb.from('orders').update({ status: 'voided' }).eq('id', orderId);
-    const idx = _cache.orders.findIndex(o => o.id === orderId);
-    if (idx >= 0) _cache.orders[idx].status = 'voided';
-
-    // 2b) Write the negative refund tender rows (Tier 0.2 — this was
-    // documented above for months but never implemented; the competitive
-    // audit caught the doc/code mismatch). Dated NOW, so voiding
-    // yesterday's order reduces TODAY's expected drawer cash.
+    // 3) Write the negative refund tender rows. Dated NOW, so voiding
+    //    yesterday's order reduces TODAY's expected drawer cash.
+    //    Insert failure is SURFACED (toast + audit), not swallowed — the
+    //    order is already voided, so a missing refund row silently
+    //    overstates the drawer (IT audit 2026-07-03 severity 1).
     if (tenders.length > 0) {
       const refundRows = tenders.map(t => ({
         order_id: orderId,
@@ -1982,6 +2013,16 @@ GC.Store = (function () {
         .from('order_payments').insert(refundRows).select();
       if (refundErr) {
         console.error('void refund rows failed:', refundErr);
+        if (GC.toast) GC.toast(`⚠️ 退款行写入失败 (#${order.orderNo}) — 钱箱预期会偏高，请通知管理员`, 'error');
+        try {
+          await sb.from('audit_log').insert({
+            action: 'void_refund_rows_failed',
+            actor_email: actor,
+            before_state: { order_no: order.orderNo, tenders: refundRows },
+            note: String(refundErr.message || refundErr),
+            branch_id: order.branchId || _currentBranchId,
+          });
+        } catch (_) {}
       } else if (refundData) {
         _cache.orderPayments.push(...refundData.map(orderPaymentToApp));
       }
@@ -2013,6 +2054,7 @@ GC.Store = (function () {
    * opts: { note?, staff? }
    */
   async function voidSession(sessionId, opts = {}) {
+    assertOnline();
     const session = _cache.sessions.find(s => s.id === sessionId);
     if (!session) throw new Error('Session not found');
     if (session.status === 'voided') return;
@@ -2024,7 +2066,22 @@ GC.Store = (function () {
     const note = opts.note || null;
     const staff = opts.staff || null;
 
-    // 1) Refund to member balance if this was a member session.
+    // 1) CLAIM the void first — conditional update prevents two registers
+    //    double-refunding the same session (IT audit 2026-07-03).
+    const { data: claimed, error: claimErr } = await sb
+      .from('sessions').update({ status: 'voided' })
+      .eq('id', sessionId).eq('status', 'completed')
+      .select('id');
+    if (claimErr) throw claimErr;
+    if (!claimed || claimed.length === 0) {
+      const idx0 = _cache.sessions.findIndex(s => s.id === sessionId);
+      if (idx0 >= 0) _cache.sessions[idx0].status = 'voided';
+      throw new Error('此台已被另一台设备作废 / Already voided on another register');
+    }
+    const idx = _cache.sessions.findIndex(s => s.id === sessionId);
+    if (idx >= 0) _cache.sessions[idx].status = 'voided';
+
+    // 2) Refund to member balance if this was a member session.
     let memberRefunded = 0;
     if (session.memberId && session.paymentMethod === 'member_balance' && session.total > 0) {
       await chargeBalance(session.memberId, Number(session.total), `void_session_${session.stationName}`);
@@ -2038,17 +2095,10 @@ GC.Store = (function () {
       }
     }
 
-    // 2) Mark session voided.
-    const { error } = await sb.from('sessions').update({ status: 'voided' }).eq('id', sessionId);
-    if (error) throw error;
-    const idx = _cache.sessions.findIndex(s => s.id === sessionId);
-    if (idx >= 0) _cache.sessions[idx].status = 'voided';
-
-    // 2b) Negative refund tender row (Tier 0.2). Sessions have no original
+    // 3) Negative refund tender row (Tier 0.2). Sessions have no original
     // order_payments row — getDailySummary counts voided sessions' totals by
     // their endTime, and this refund row (dated NOW, order_id NULL) subtracts
-    // on the refund date. Same-day void nets zero; cross-day void reduces
-    // today's expected drawer cash.
+    // on the refund date. Failure is surfaced, not swallowed.
     if (Number(session.total) > 0) {
       const method = session.memberId ? 'member_balance' : (session.paymentMethod || 'cash');
       const { data: refundData, error: refundErr } = await sb.from('order_payments').insert({
@@ -2058,8 +2108,21 @@ GC.Store = (function () {
         note: `refund:session_void:${sessionId}${staff ? ':' + staff : ''}`,
         branch_id: session.branchId || _currentBranchId,
       }).select();
-      if (refundErr) console.error('session void refund row failed:', refundErr);
-      else if (refundData) _cache.orderPayments.push(...refundData.map(orderPaymentToApp));
+      if (refundErr) {
+        console.error('session void refund row failed:', refundErr);
+        if (GC.toast) GC.toast(`⚠️ 退款行写入失败 (${session.stationName}) — 钱箱预期会偏高，请通知管理员`, 'error');
+        try {
+          await sb.from('audit_log').insert({
+            action: 'void_refund_rows_failed',
+            actor_email: actor,
+            before_state: { session_id: sessionId, station: session.stationName, total: session.total },
+            note: String(refundErr.message || refundErr),
+            branch_id: session.branchId || _currentBranchId,
+          });
+        } catch (_) {}
+      } else if (refundData) {
+        _cache.orderPayments.push(...refundData.map(orderPaymentToApp));
+      }
     }
 
     // 3) Audit.

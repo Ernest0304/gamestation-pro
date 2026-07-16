@@ -138,12 +138,26 @@ window.GC = window.GC || {};
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
+  // Peppered PIN hash (Finance audit 2026-07-03): a bare sha256 of a 4-8
+  // digit PIN is a trivially brute-forceable table. The pepper doesn't make
+  // it cryptographically strong — the real control is Tier A1 server-side
+  // roles — but it defeats casual rainbow lookups of the cached hash.
+  GC.pinHash = function (pin) { return GC.sha256Hex('yxd-pin-v1|' + pin); };
+
+  // Failed-attempt lockout: 3 wrong PINs → 30s cooldown on this device.
+  let _pinFails = 0;
+  let _pinLockUntil = 0;
 
   GC.requireManagerPin = function (actionLabel) {
     return new Promise(resolve => {
       const settings = GC.Store.getSettings && GC.Store.getSettings();
       const pinHash = settings && settings.managerPin;
       if (!pinHash) { resolve(true); return; }   // gate disabled until PIN set
+      if (Date.now() < _pinLockUntil) {
+        const secs = Math.ceil((_pinLockUntil - Date.now()) / 1000);
+        if (GC.toast) GC.toast(`PIN 已锁定，${secs} 秒后重试 / PIN locked`, 'error');
+        resolve(false); return;
+      }
 
       const modal = document.getElementById('modal');
       modal.innerHTML = `
@@ -174,8 +188,16 @@ window.GC = window.GC || {};
       document.getElementById('pin-close').onclick = () => close(false);
       document.getElementById('pin-cancel').onclick = () => close(false);
       const verify = async () => {
-        const hash = await GC.sha256Hex(input.value.trim());
-        if (hash === pinHash) { close(true); return; }
+        const hash = await GC.pinHash(input.value.trim());
+        if (hash === pinHash) { _pinFails = 0; close(true); return; }
+        _pinFails++;
+        if (_pinFails >= 3) {
+          _pinFails = 0;
+          _pinLockUntil = Date.now() + 30000;
+          close(false);
+          if (GC.toast) GC.toast('连续 3 次错误 — PIN 锁定 30 秒 / Locked 30s', 'error');
+          return;
+        }
         document.getElementById('pin-error').style.display = 'block';
         input.value = '';
         input.focus();
